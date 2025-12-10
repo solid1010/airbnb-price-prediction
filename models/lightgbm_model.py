@@ -93,22 +93,31 @@ def feature_engineering_extra(df):
     df_feat['id'] = df['id'] # Keep ID for merging
     
     # 1. Host Metrics
+    # Host Metrics Binning
+
     # Host Response Rate
     def clean_rate(x):
         if pd.isna(x): return np.nan
         if isinstance(x, str):
-            return float(x.replace('%', '')) / 100
-        return float(x)
+            return float(x.replace('%', '')) 
+        return float(x) # Return raw percentage 0-100
 
-    df_feat['host_response_rate'] = df['host_response_rate'].apply(clean_rate)
-    df_feat['host_acceptance_rate'] = df['host_acceptance_rate'].apply(clean_rate)
+    # Binning function
+    def bin_rate(val):
+        if pd.isna(val): return 0 # Unknown
+        if val == 100: return 4   # Perfect
+        if val >= 90:  return 3   # High
+        if val >= 50:  return 2   # Medium
+        return 1                  # Low
+
+    # Standardize to 0-100 scale then bin
+    df['host_response_rate_clean'] = df['host_response_rate'].apply(clean_rate)
+    df['host_acceptance_rate_clean'] = df['host_acceptance_rate'].apply(clean_rate)
     
-    # Fill NaN with median (or special value, but median is safe for LGBM)
-    df_feat['host_response_rate'] = df_feat['host_response_rate'].fillna(df_feat['host_response_rate'].median())
-    df_feat['host_acceptance_rate'] = df_feat['host_acceptance_rate'].fillna(df_feat['host_acceptance_rate'].median())
+    df_feat['host_response_rate_bin'] = df['host_response_rate_clean'].apply(bin_rate)
+    df_feat['host_acceptance_rate_bin'] = df['host_acceptance_rate_clean'].apply(bin_rate)
 
     # Host Response Time
-    # Map: 'within an hour': 1, 'within a few hours': 2, 'within a day': 3, 'a few days or more': 4
     resp_map = {
         'within an hour': 1,
         'within a few hours': 2,
@@ -118,13 +127,11 @@ def feature_engineering_extra(df):
     df_feat['host_response_time_ord'] = df['host_response_time'].map(resp_map).fillna(2) # Default to 'within a few hours'
 
     # 2. Host Tenure
-    # Convert host_since to datetime and calculate days until reference date
     ref_date = pd.to_datetime("2025-01-01")
     df_feat['host_tenure_days'] = (ref_date - pd.to_datetime(df['host_since'], errors='coerce')).dt.days
-    df_feat['host_tenure_days'] = df_feat['host_tenure_days'].fillna(0) # New hosts if missing
+    df_feat['host_tenure_days'] = df_feat['host_tenure_days'].fillna(0)
 
     # 3. Flags
-    # instant_bookable
     df_feat['instant_bookable_flag'] = df['instant_bookable'].apply(lambda x: 1 if x == 't' else 0)
 
     # 4. Review Scores
@@ -140,72 +147,6 @@ def feature_engineering_extra(df):
     
     for col in review_cols:
         if col in df.columns:
-            # Simple median imputation for now
-            median_val = df[col].median()
-            df_feat[col] = df[col].fillna(median_val)
-    
-    return df_feat
-
-def feature_engineering_extra(df):
-    """
-    Extracts additional features from raw dataframe:
-    - Host Metrics: Response Rate/Time, Acceptance Rate
-    - Host Tenure: host_since
-    - Review Scores
-    - Flags: instant_bookable
-    """
-    df_feat = pd.DataFrame()
-    df_feat['id'] = df['id'] # Keep ID for merging
-    
-    # 1. Host Metrics
-    # Host Response Rate
-    def clean_rate(x):
-        if pd.isna(x): return np.nan
-        if isinstance(x, str):
-            return float(x.replace('%', '')) / 100
-        return float(x)
-
-    df_feat['host_response_rate'] = df['host_response_rate'].apply(clean_rate)
-    df_feat['host_acceptance_rate'] = df['host_acceptance_rate'].apply(clean_rate)
-    
-    # Fill NaN with median (or special value, but median is safe for LGBM)
-    df_feat['host_response_rate'] = df_feat['host_response_rate'].fillna(df_feat['host_response_rate'].median())
-    df_feat['host_acceptance_rate'] = df_feat['host_acceptance_rate'].fillna(df_feat['host_acceptance_rate'].median())
-
-    # Host Response Time
-    # Map: 'within an hour': 1, 'within a few hours': 2, 'within a day': 3, 'a few days or more': 4
-    resp_map = {
-        'within an hour': 1,
-        'within a few hours': 2,
-        'within a day': 3,
-        'a few days or more': 4
-    }
-    df_feat['host_response_time_ord'] = df['host_response_time'].map(resp_map).fillna(2) # Default to 'within a few hours'
-
-    # 2. Host Tenure
-    # Convert host_since to datetime and calculate days until reference date
-    ref_date = pd.to_datetime("2025-01-01")
-    df_feat['host_tenure_days'] = (ref_date - pd.to_datetime(df['host_since'], errors='coerce')).dt.days
-    df_feat['host_tenure_days'] = df_feat['host_tenure_days'].fillna(0) # New hosts if missing
-
-    # 3. Flags
-    # instant_bookable
-    df_feat['instant_bookable_flag'] = df['instant_bookable'].apply(lambda x: 1 if x == 't' else 0)
-
-    # 4. Review Scores
-    review_cols = [
-        'review_scores_rating', 
-        'review_scores_accuracy', 
-        'review_scores_cleanliness', 
-        'review_scores_checkin', 
-        'review_scores_communication', 
-        'review_scores_location', 
-        'review_scores_value'
-    ]
-    
-    for col in review_cols:
-        if col in df.columns:
-            # Simple median imputation for now
             median_val = df[col].median()
             df_feat[col] = df[col].fillna(median_val)
     
@@ -272,7 +213,7 @@ def main():
     X_geo_train = get_geo_features(train_raw_subset)
     X_geo_test = get_geo_features(test_raw_subset)
 
-    print("Generating extra features (Host Metrics, Review Scores)...")
+    print("Generating extra features (Host Metrics [Binned], Review Scores)...")
     X_extra_train = feature_engineering_extra(train_raw_subset)
     X_extra_test = feature_engineering_extra(test_raw_subset)
 
@@ -313,8 +254,9 @@ def main():
     
     print(f"Final feature count: {X_final.shape[1]}")
 
-    # 5. Model Training
-    print("Training LightGBM model with best params...")
+    # 5. K-Fold Cross Validation
+    print("Starting 5-Fold Cross Validation...")
+    from sklearn.model_selection import KFold
     
     # Parameters from Optuna study in notebook
     best_params = {
@@ -332,40 +274,70 @@ def main():
         'n_jobs': -1
     }
 
-    # Split for validation reporting (optional but good practice)
-    X_train, X_valid, y_train, y_valid = train_test_split(X_final, y, test_size=0.2, random_state=42)
+    kf = KFold(n_splits=5, shuffle=True, random_state=42)
     
-    model = lgb.LGBMRegressor(**best_params)
-    model.fit(
-        X_train, y_train,
-        eval_set=[(X_valid, y_valid)],
-        callbacks=[lgb.early_stopping(50, verbose=True)]
-    )
+    # Store OOF predictions and Test predictions
+    oof_preds = np.zeros(len(y))
+    test_preds_accum = np.zeros(len(X_test_final))
+    
+    fold_scores = []
+    
+    X_final_np = X_final.to_numpy()
+    y_np = y.to_numpy()
+    X_test_np = X_test_final.to_numpy()
+    
+    for fold, (train_idx, val_idx) in enumerate(kf.split(X_final_np, y_np)):
+        print(f"  Fold {fold+1}/5")
+        X_tr, X_val = X_final_np[train_idx], X_final_np[val_idx]
+        y_tr, y_val = y_np[train_idx], y_np[val_idx]
+        
+        model = lgb.LGBMRegressor(**best_params)
+        model.fit(
+            X_tr, y_tr,
+            eval_set=[(X_val, y_val)],
+            callbacks=[lgb.early_stopping(50, verbose=False)]
+        )
+        
+        # Predict Valid
+        val_pred = model.predict(X_val)
+        oof_preds[val_idx] = val_pred
+        score = np.sqrt(mean_squared_error(y_val, val_pred))
+        fold_scores.append(score)
+        print(f"    RMSE: {score:.5f}")
+        
+        # Predict Test
+        test_preds_accum += model.predict(X_test_np)
 
-    # Evaluation
-    preds_log = model.predict(X_valid)
-    rmse = np.sqrt(mean_squared_error(y_valid, preds_log))
-    print(f"Validation RMSE: {rmse:.5f}")
-
-    # Retrain on full data for submission (Optional, but often boost performance)
-    print("Retraining on full dataset...")
+    # Average CV Score
+    avg_rmse = np.mean(fold_scores)
+    print(f"\nAverage CV RMSE: {avg_rmse:.5f}")
+    
+    # Average Test Predictions
+    test_preds_avg_log = test_preds_accum / 5
+    
+    # 6. Save Model (Saving the last fold model loosely, or we could retrain on all)
+    # Ideally for production we retrain on all, but for ensemble we usually keep folds.
+    # For now, let's retrain on FULL data one last time for the 'final_model.pkl' artifact, 
+    # OR better, save the average prediction which is robust.
+    # Let's stick to the strategy: 5-Fold Avg is for submission. 
+    # To provide a single artifact, we can retrain on full data using the robust features.
+    
+    print("Retraining on full dataset for final artifact...")
     full_model = lgb.LGBMRegressor(**best_params)
     full_model.fit(X_final, y)
-
-    # 6. Save Model & Artifacts
+    
     output_dir = "models" if os.path.exists("models") else "../models"
     submissions_dir = "submissions" if os.path.exists("submissions") else "../submissions"
     
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(submissions_dir, exist_ok=True)
 
-    print("Saving model and artifacts...")
+    print("Saving full model...")
     joblib.dump(full_model, os.path.join(output_dir, "lightgbm_final_model.pkl"))
     
     # 7. Prediction & Submission
-    print("Generating submission...")
-    final_preds_log = full_model.predict(X_test_final)
-    final_preds = np.expm1(final_preds_log) # Inverse log transform
+    print("Generating submission from CV Average...")
+    final_preds = np.expm1(test_preds_avg_log) # Inverse log transform of AVGERAGE predictions
     final_preds = np.maximum(final_preds, 0) # Clip negative predictions
 
     # test_raw might have 'id' as index now
@@ -377,7 +349,7 @@ def main():
     })
     
     # Determine save path
-    submission_path = os.path.join(submissions_dir, "submission_script_lgbm_extra.csv")
+    submission_path = os.path.join(submissions_dir, "submission_lgbm_cv_binned.csv")
     submission.to_csv(submission_path, index=False)
     print(f"Submission saved to {submission_path}")
 

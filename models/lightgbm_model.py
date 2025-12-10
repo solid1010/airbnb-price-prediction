@@ -81,6 +81,136 @@ def get_geo_features(df):
     geo_data["min_dist_center"] = geo_data[centers].min(axis=1)
     return geo_data
 
+def feature_engineering_extra(df):
+    """
+    Extracts additional features from raw dataframe:
+    - Host Metrics: Response Rate/Time, Acceptance Rate
+    - Host Tenure: host_since
+    - Review Scores
+    - Flags: instant_bookable
+    """
+    df_feat = pd.DataFrame()
+    df_feat['id'] = df['id'] # Keep ID for merging
+    
+    # 1. Host Metrics
+    # Host Response Rate
+    def clean_rate(x):
+        if pd.isna(x): return np.nan
+        if isinstance(x, str):
+            return float(x.replace('%', '')) / 100
+        return float(x)
+
+    df_feat['host_response_rate'] = df['host_response_rate'].apply(clean_rate)
+    df_feat['host_acceptance_rate'] = df['host_acceptance_rate'].apply(clean_rate)
+    
+    # Fill NaN with median (or special value, but median is safe for LGBM)
+    df_feat['host_response_rate'] = df_feat['host_response_rate'].fillna(df_feat['host_response_rate'].median())
+    df_feat['host_acceptance_rate'] = df_feat['host_acceptance_rate'].fillna(df_feat['host_acceptance_rate'].median())
+
+    # Host Response Time
+    # Map: 'within an hour': 1, 'within a few hours': 2, 'within a day': 3, 'a few days or more': 4
+    resp_map = {
+        'within an hour': 1,
+        'within a few hours': 2,
+        'within a day': 3,
+        'a few days or more': 4
+    }
+    df_feat['host_response_time_ord'] = df['host_response_time'].map(resp_map).fillna(2) # Default to 'within a few hours'
+
+    # 2. Host Tenure
+    # Convert host_since to datetime and calculate days until reference date
+    ref_date = pd.to_datetime("2025-01-01")
+    df_feat['host_tenure_days'] = (ref_date - pd.to_datetime(df['host_since'], errors='coerce')).dt.days
+    df_feat['host_tenure_days'] = df_feat['host_tenure_days'].fillna(0) # New hosts if missing
+
+    # 3. Flags
+    # instant_bookable
+    df_feat['instant_bookable_flag'] = df['instant_bookable'].apply(lambda x: 1 if x == 't' else 0)
+
+    # 4. Review Scores
+    review_cols = [
+        'review_scores_rating', 
+        'review_scores_accuracy', 
+        'review_scores_cleanliness', 
+        'review_scores_checkin', 
+        'review_scores_communication', 
+        'review_scores_location', 
+        'review_scores_value'
+    ]
+    
+    for col in review_cols:
+        if col in df.columns:
+            # Simple median imputation for now
+            median_val = df[col].median()
+            df_feat[col] = df[col].fillna(median_val)
+    
+    return df_feat
+
+def feature_engineering_extra(df):
+    """
+    Extracts additional features from raw dataframe:
+    - Host Metrics: Response Rate/Time, Acceptance Rate
+    - Host Tenure: host_since
+    - Review Scores
+    - Flags: instant_bookable
+    """
+    df_feat = pd.DataFrame()
+    df_feat['id'] = df['id'] # Keep ID for merging
+    
+    # 1. Host Metrics
+    # Host Response Rate
+    def clean_rate(x):
+        if pd.isna(x): return np.nan
+        if isinstance(x, str):
+            return float(x.replace('%', '')) / 100
+        return float(x)
+
+    df_feat['host_response_rate'] = df['host_response_rate'].apply(clean_rate)
+    df_feat['host_acceptance_rate'] = df['host_acceptance_rate'].apply(clean_rate)
+    
+    # Fill NaN with median (or special value, but median is safe for LGBM)
+    df_feat['host_response_rate'] = df_feat['host_response_rate'].fillna(df_feat['host_response_rate'].median())
+    df_feat['host_acceptance_rate'] = df_feat['host_acceptance_rate'].fillna(df_feat['host_acceptance_rate'].median())
+
+    # Host Response Time
+    # Map: 'within an hour': 1, 'within a few hours': 2, 'within a day': 3, 'a few days or more': 4
+    resp_map = {
+        'within an hour': 1,
+        'within a few hours': 2,
+        'within a day': 3,
+        'a few days or more': 4
+    }
+    df_feat['host_response_time_ord'] = df['host_response_time'].map(resp_map).fillna(2) # Default to 'within a few hours'
+
+    # 2. Host Tenure
+    # Convert host_since to datetime and calculate days until reference date
+    ref_date = pd.to_datetime("2025-01-01")
+    df_feat['host_tenure_days'] = (ref_date - pd.to_datetime(df['host_since'], errors='coerce')).dt.days
+    df_feat['host_tenure_days'] = df_feat['host_tenure_days'].fillna(0) # New hosts if missing
+
+    # 3. Flags
+    # instant_bookable
+    df_feat['instant_bookable_flag'] = df['instant_bookable'].apply(lambda x: 1 if x == 't' else 0)
+
+    # 4. Review Scores
+    review_cols = [
+        'review_scores_rating', 
+        'review_scores_accuracy', 
+        'review_scores_cleanliness', 
+        'review_scores_checkin', 
+        'review_scores_communication', 
+        'review_scores_location', 
+        'review_scores_value'
+    ]
+    
+    for col in review_cols:
+        if col in df.columns:
+            # Simple median imputation for now
+            median_val = df[col].median()
+            df_feat[col] = df[col].fillna(median_val)
+    
+    return df_feat
+
 def clean_col_names(df):
     """Cleans column names to be compatible with LightGBM."""
     new_cols = []
@@ -107,43 +237,65 @@ def main():
             print("Error: 'data' directory not found.")
             return
 
+    # Helper to get IDs from processed files for merging
+    try:
+        df_train_proc = joblib.load(os.path.join(data_dir, "processed_train.joblib"))
+        df_test_proc = joblib.load(os.path.join(data_dir, "processed_test.joblib"))
+        train_ids = df_train_proc['id']
+        test_ids = df_test_proc['id']
+    except Exception as e:
+        print(f"Error loading IDs: {e}")
+        return
+
     X_team, y, X_test_team, train_raw, test_raw = load_data(data_dir)
 
-    # 2. Align Data (Filter outliers as done in EDA)
+    # 2. Align Data
     print("Aligning and filtering data...")
-    # NOTE: The filtering logic below mimics the notebook. 
-    # Important: X_team and y are ALREADY processed/aligned in the previous steps (EDA notebook).
-    # However, train_raw needs to be aligned to X_team if rows were dropped.
-    # In the notebook logic, joblib files X and y are already aligned. 
-    # train_raw is just used for 'latitude' and 'longitude'.
-    # We must ensure train_raw matches X_team indices.
+    # NOTE: We align everything to the processed joblib files using ID.
     
-    # Re-applying the filter logic to train_raw to match dimensions if needed, 
-    # OR assuming X_team was created FROM the filtered version.
-    # The notebook code: train_filtered = train_filtered.iloc[:X_team.shape[0]] 
-    # suggests a simple truncation was used if sizes didn't match, which is risky but we follow the notebook logic for fidelity.
-    
-    # Robust alignment strategy:
-    # It takes raw train, cleans price, clips outliers.
-    train_raw["price"] = train_raw["price"].replace({"\$": "", ",": ""}, regex=True).astype(float)
-    train_raw = train_raw.dropna(subset=["price"])
-    q_high = train_raw["price"].quantile(0.99)
-    train_filtered = train_raw[train_raw["price"] <= q_high].reset_index(drop=True)
-    
-    if train_filtered.shape[0] != X_team.shape[0]:
-        print(f"Warning: Raw filtered shape {train_filtered.shape} != Processed shape {X_team.shape}")
-        print("Truncating filtered raw data to match processed data length (as per notebook logic).")
-        train_filtered = train_filtered.iloc[:X_team.shape[0]]
+    # Subset train_raw and test_raw using IDs to ensure perfect match
+    if 'id' in train_raw.columns:
+        train_raw = train_raw.set_index('id')
+        train_raw_subset = train_raw.loc[train_ids].reset_index()
+    else:
+        print("Warning: id not found in train.csv, using default order (risky)")
+        train_raw_subset = train_raw
 
-    # 3. Feature Engineering (Geospatial)
+    if 'id' in test_raw.columns:
+        test_raw = test_raw.set_index('id')
+        test_raw_subset = test_raw.loc[test_ids].reset_index()
+    else:
+        test_raw_subset = test_raw
+
+    # 3. Feature Engineering (Geospatial & Extra)
     print("Generating geospatial features...")
-    X_geo_train = get_geo_features(train_filtered)
-    X_geo_test = get_geo_features(test_raw)
+    X_geo_train = get_geo_features(train_raw_subset)
+    X_geo_test = get_geo_features(test_raw_subset)
+
+    print("Generating extra features (Host Metrics, Review Scores)...")
+    X_extra_train = feature_engineering_extra(train_raw_subset)
+    X_extra_test = feature_engineering_extra(test_raw_subset)
+
+    # Drop ID from extra features before concat
+    if 'id' in X_extra_train.columns:
+        X_extra_train = X_extra_train.drop(columns=['id'])
+    if 'id' in X_extra_test.columns:
+        X_extra_test = X_extra_test.drop(columns=['id'])
 
     # 4. Merge & Clean
     print("Merging features...")
-    X_final = pd.concat([X_team.reset_index(drop=True), X_geo_train.reset_index(drop=True)], axis=1)
-    X_test_final = pd.concat([X_test_team.reset_index(drop=True), X_geo_test.reset_index(drop=True)], axis=1)
+    # Reset indices to ensure smooth concat
+    X_final = pd.concat([
+        X_team.reset_index(drop=True), 
+        X_geo_train.reset_index(drop=True),
+        X_extra_train.reset_index(drop=True)
+    ], axis=1)
+    
+    X_test_final = pd.concat([
+        X_test_team.reset_index(drop=True), 
+        X_geo_test.reset_index(drop=True),
+        X_extra_test.reset_index(drop=True)
+    ], axis=1)
 
     X_final = clean_col_names(X_final)
     X_test_final = clean_col_names(X_test_final)
@@ -216,13 +368,16 @@ def main():
     final_preds = np.expm1(final_preds_log) # Inverse log transform
     final_preds = np.maximum(final_preds, 0) # Clip negative predictions
 
+    # test_raw might have 'id' as index now
+    test_ids_lookup = test_raw.index if test_raw.index.name == 'id' else test_raw['id']
+
     submission = pd.DataFrame({
-        "ID": test_raw["id"],
+        "ID": test_ids_lookup,
         "TARGET": final_preds
     })
     
     # Determine save path
-    submission_path = os.path.join(submissions_dir, "submission_script_lgbm.csv")
+    submission_path = os.path.join(submissions_dir, "submission_script_lgbm_extra.csv")
     submission.to_csv(submission_path, index=False)
     print(f"Submission saved to {submission_path}")
 

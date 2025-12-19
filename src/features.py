@@ -3,6 +3,10 @@ import ast
 import numpy as np
 import pandas as pd
 
+from sklearn.experimental import enable_iterative_imputer  # For MICE
+from sklearn.impute import IterativeImputer
+
+from sklearn.preprocessing import RobustScaler
 
 # -----------------------
 # Basic helpers
@@ -20,6 +24,42 @@ def drop_unnamed(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     cols = [c for c in df.columns if str(c).lower().startswith("unnamed")]
     return df.drop(columns=cols, errors="ignore")
+
+def remove_duplicates(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Removes duplicates based on physical attributes (subset) rather than just ID,
+    keeping the most recent record.
+    """
+    df = df.copy()
+    
+    # Ensure date column is datetime to sort by recency
+    if "last_scraped" in df.columns:
+        df["last_scraped"] = pd.to_datetime(df["last_scraped"], errors="coerce")
+        # Sort by date descending to keep the newest record first
+        df = df.sort_values(by="last_scraped", ascending=False)
+    
+    # Define the "fingerprint" of a listing.
+    # Even if IDs differ, listings with same location, room type, and price are likely duplicates.
+    subset_cols = [
+        "latitude", 
+        "longitude", 
+        "room_type", 
+        "price", 
+        "minimum_nights"
+    ]
+    
+    # Use only columns present in the dataframe
+    valid_subset = [c for c in subset_cols if c in df.columns]
+    
+    if valid_subset:
+        initial_len = len(df)
+        # Drop duplicates based on subset, keeping the first (newest) one
+        df = df.drop_duplicates(subset=valid_subset, keep="first")
+        print(f"Duplicate Removal: {initial_len - len(df)} rows dropped using subset logic.")
+    else:
+        df = df.drop_duplicates()
+
+    return df
 
 
 def clean_price(x) -> float:
@@ -167,6 +207,114 @@ def add_room_type_dummies(df: pd.DataFrame, dummy_cols=None):
     return df, list(dummy_cols)
 
 
+
+# ----------------------------------------------
+# Advanced Preprocessing (Imputation & Outliers)
+# ----------------------------------------------
+
+def impute_missing_advanced(df: pd.DataFrame, target_cols=None) -> pd.DataFrame:
+    """
+    Performs advanced missing value handling:
+    1. Adds binary flags (e.g., 'bedrooms_is_missing') for columns with NaNs.
+    2. Uses MICE (Multivariate Imputation) to fill missing values based on correlations
+       (e.g., estimating missing 'bedrooms' using 'accommodates' and 'price').
+    """
+    df = df.copy()
+    
+    # Identify numeric columns
+    numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+    
+    if target_cols is None:
+        # Select numeric columns that actually have missing values
+        target_cols = [c for c in numeric_cols if df[c].isnull().any()]
+    
+    if not target_cols:
+        return df
+
+    # Step 1: Identification (Add boolean flags)
+    # The fact that data is missing can be a signal itself.
+    for col in target_cols:
+        df[f"{col}_is_missing"] = df[col].isnull().astype(int)
+    
+    # Step 2: Multivariate Imputation (MICE)
+    # We use only numeric columns for the imputer to find correlations
+    imputer = IterativeImputer(max_iter=10, random_state=42)
+    
+    # Fit and transform on numeric data
+    try:
+        df_numeric_imputed = imputer.fit_transform(df[numeric_cols])
+        # Convert result back to DataFrame to map columns correctly
+        df_numeric_imputed = pd.DataFrame(df_numeric_imputed, columns=numeric_cols, index=df.index)
+        
+        # Update the original dataframe with imputed values for target columns
+        for col in target_cols:
+            df[col] = df_numeric_imputed[col]
+    except Exception as e:
+        print(f"Warning: MICE imputation failed, skipping. Error: {e}")
+        
+    return df
+
+
+def handle_outliers_winsorization(df: pd.DataFrame, columns=None, limits=(0.01, 0.99)) -> pd.DataFrame:
+    """
+    Clips outliers in specified columns to the lower and upper percentile limits
+    instead of dropping them. This prevents data loss while handling extreme values.
+    """
+    df = df.copy()
+    
+    # If no columns provided, automatically select numeric columns with enough unique values
+    if columns is None:
+        columns = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c]) 
+                   and df[c].nunique() > 10]
+
+    lower_quantile, upper_quantile = limits
+
+    for col in columns:
+        if col in df.columns:
+            # Calculate lower and upper bounds based on quantiles
+            lower_bound = df[col].quantile(lower_quantile)
+            upper_bound = df[col].quantile(upper_quantile)
+            
+            # Clip values: values < lower_bound become lower_bound,
+            # values > upper_bound become upper_bound.
+            df[col] = df[col].clip(lower=lower_bound, upper=upper_bound)
+            
+    return df
+
+
+
+def target_encode(df: pd.DataFrame, by: str, target: str, m: float = 10.0, mapping: dict = None) -> tuple[pd.DataFrame, dict]:
+    """
+    Applies Target Encoding with Smoothing to handle high-cardinality categorical features.
+    Replaces a category (e.g., 'neighbourhood') with the smoothed mean of the target (e.g., 'price').
+
+    Returns:
+        df (pd.DataFrame): Dataframe with the new encoded column.
+        mapping (dict): The calculated means (used to apply the same mapping to the test set).
+    """
+    df = df.copy()
+    col_name = f"{by}_encoded"
+    
+    # 1. Training: Calculate mapping if not provided
+    if mapping is None:
+        global_mean = df[target].mean()
+        agg = df.groupby(by)[target].agg(['count', 'mean'])
+        
+        # Smoothing Formula: (n * mean + m * global_mean) / (n + m)
+        smooth = (agg['count'] * agg['mean'] + m * global_mean) / (agg['count'] + m)
+        # Store as dictionary for reuse
+        mapping = smooth.to_dict()
+        # Save global mean to handle unknown categories in test set
+        mapping['global_mean'] = global_mean
+
+    # 2. Transform: Apply mapping
+    # "global_mean" key is reserved for filling unknowns
+    fill_value = mapping.get('global_mean', 0)
+    df[col_name] = df[by].map(mapping).fillna(fill_value)
+    
+    return df, mapping
+
+
 # -----------------------
 # Core feature builder
 # -----------------------
@@ -217,6 +365,8 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
     # Dates
     if "last_scraped" in df.columns:
         df["last_scraped_dt"] = safe_to_datetime(df["last_scraped"])
+        # Convert "last_scraped" month into cyclical sine/cosine features to capture seasonality
+        df = add_cyclical_date_features(df, "last_scraped", period="month")
     if "host_since" in df.columns:
         df["host_since_dt"] = safe_to_datetime(df["host_since"])
 
@@ -224,8 +374,10 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
     if {"last_scraped_dt", "host_since_dt"}.issubset(df.columns):
         df["host_tenure_days"] = (df["last_scraped_dt"] - df["host_since_dt"]).dt.days
 
+    df = add_geospatial_features(df)
+
     # -----------------------
-    # NEW: ratio / per-person features
+    # ratio / per-person features
     # -----------------------
     if "accommodates" in df.columns:
         df["accommodates_safe"] = df["accommodates"].replace(0, 1)
@@ -243,6 +395,41 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def add_cyclical_date_features(df: pd.DataFrame, col_name: str, period: str = 'month') -> pd.DataFrame:
+    """
+    Converts a date column into cyclical sine/cosine features to preserve seasonality.
+    Example: Month 12 and Month 1 are numerically far but temporally close.
+    """
+    df = df.copy()
+    
+    # Ensure column is datetime
+    if col_name not in df.columns:
+        return df
+        
+    dt_col = pd.to_datetime(df[col_name], errors='coerce')
+    
+    if period == 'month':
+        # Months range 1-12
+        max_val = 12
+        val = dt_col.dt.month
+    elif period == 'day':
+        # Days range 1-31 (approx)
+        max_val = 31
+        val = dt_col.dt.day
+    elif period == 'weekday':
+        # Monday=0, Sunday=6
+        max_val = 7
+        val = dt_col.dt.weekday
+    else:
+        return df
+
+    # Apply Sine and Cosine transformation
+    # Formula: sin(2 * pi * x / max_val)
+    df[f"{col_name}_{period}_sin"] = np.sin(2 * np.pi * val / max_val)
+    df[f"{col_name}_{period}_cos"] = np.cos(2 * np.pi * val / max_val)
+    
+    return df
+
 def add_log_target(df: pd.DataFrame) -> pd.DataFrame:
     """Create log_price (train only)."""
     df = df.copy()
@@ -250,6 +437,61 @@ def add_log_target(df: pd.DataFrame) -> pd.DataFrame:
         raise ValueError("price_num missing")
     df.loc[df["price_num"] < 0, "price_num"] = np.nan
     df["log_price"] = np.log1p(df["price_num"])
+    return df
+
+# -----------------------
+# Geospatial Feature Engineering
+# -----------------------
+
+def haversine_distance(lat1, lon1, lat2, lon2):
+    """
+    Calculates the great-circle distance between two points on the Earth surface.
+    Returns distance in kilometers.
+    """
+    R = 6371  # Earth radius in km
+    phi1, phi2 = np.radians(lat1), np.radians(lat2)
+    dphi = np.radians(lat2 - lat1)
+    dlambda = np.radians(lon2 - lon1)
+    
+    a = np.sin(dphi/2)**2 + np.cos(phi1)*np.cos(phi2)*np.sin(dlambda/2)**2
+    c = 2 * np.arctan2(np.sqrt(a), np.sqrt(1-a))
+    
+    return R * c
+
+def add_geospatial_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Computes distances to key Istanbul landmarks (Taksim, Sultanahmet, etc.)
+    and adds them as new features. Also calculates distance to the nearest center.
+    
+    Ref: User's Notebook - Geospatial Feature Engineering
+    """
+    df = df.copy()
+    
+    # Coordinates must exist
+    if "latitude" not in df.columns or "longitude" not in df.columns:
+        return df
+
+    # Critical locations in Istanbul impacting price
+    locations = {
+        "Taksim": (41.0370, 28.9851),
+        "Sultanahmet": (41.0054, 28.9768),
+        "Besiktas": (41.0422, 29.0060),
+        "Kadikoy": (40.9901, 29.0254),
+        "Airport": (41.2811, 28.7533)
+    }
+    
+    # Calculate distance for each landmark
+    for loc, (lat, lon) in locations.items():
+        col_name = f"dist_{loc}"
+        df[col_name] = haversine_distance(df["latitude"], df["longitude"], lat, lon)
+    
+    # Distance to the nearest city center (excluding Airport usually, as logic suggests)
+    # We select columns starting with 'dist_' but exclude Airport for the 'center' logic
+    center_cols = [f"dist_{loc}" for loc in locations.keys() if loc != "Airport"]
+    
+    if center_cols:
+        df["min_dist_center"] = df[center_cols].min(axis=1)
+        
     return df
 
 
@@ -356,3 +598,104 @@ def get_feature_columns(df: pd.DataFrame):
 
     cols = base_cols + room_cols
     return [c for c in cols if c in df.columns]
+
+
+
+def select_features_advanced(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Removes only the features that have 0 variance (constant values).
+    These features provide no information to the model.
+    """
+    df = df.copy()
+    initial_shape = df.shape
+    
+    # Drop Constant Numeric Columns (Variance = 0)
+    numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+    if numeric_cols:
+        var_check = df[numeric_cols].var()
+        # Find the columns which has varience of 0 or NaN values.
+        constant_numeric = var_check[var_check == 0].index.tolist()
+    else:
+        constant_numeric = []
+    
+    # Drop Constant Categorical Columns (Unique count <= 1)
+    categorical_cols = [c for c in df.columns if not pd.api.types.is_numeric_dtype(df[c])]
+    constant_cat = [c for c in categorical_cols if df[c].nunique() <= 1]
+    
+    # Combine lists
+    drop_cols = constant_numeric + constant_cat
+    
+    if drop_cols:
+        df = df.drop(columns=drop_cols)
+        print(f"Feature Selection: Dropped {len(drop_cols)} constant columns: {drop_cols}")
+    
+    print(f"Feature Selection Complete: Shape changed from {initial_shape} to {df.shape}")
+    return df
+
+
+# -----------------------
+# Scaling (RobustScaler)
+# -----------------------
+
+def scale_features_robust(df: pd.DataFrame, scaler=None) -> tuple[pd.DataFrame, object]:
+    """
+    Scales numeric features using RobustScaler.
+    RobustScaler removes the median and scales the data according to the quantile range (IQR).
+    It is robust to outliers, unlike StandardScaler.
+    """
+    df = df.copy()
+    
+    # Select numeric columns to scale
+    # Exclude target variables (price) and ID columns to prevent data leakage or errors
+    exclude_cols = ['id', 'scrape_id', 'host_id', 'price', 'price_num', 'log_price']
+    
+    numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c]) 
+                    and c not in exclude_cols]
+    
+    # Safety check
+    if not numeric_cols:
+        return df, scaler
+
+    # Fit a new scaler
+    if scaler is None:
+        scaler = RobustScaler()
+        # Fit on train data
+        scaler.fit(df[numeric_cols])
+        
+    # Apply scaling (works for both train and test)
+    scaled_values = scaler.transform(df[numeric_cols])
+    
+    # Update dataframe with scaled values
+    df[numeric_cols] = scaled_values
+    
+    return df, scaler
+
+
+# -----------------------
+# Final Polish: LightGBM Compatibility
+# -----------------------
+
+def clean_col_names(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Cleans column names to remove special characters, spaces, and non-ASCII chars.
+    This is required to prevent errors in models like LightGBM and XGBoost.
+    """
+    df = df.copy()
+    new_cols = []
+    seen_cols = {}
+    
+    for col in df.columns:
+        # Regex: Keep only alphanumeric characters and underscores. Remove everything else.
+        new_col = re.sub(r'[^A-Za-z0-9_]+', '', str(col))
+        
+        # Handle duplicates: If "Wifi" and "Wi-Fi" both become "Wifi", append a counter (Wifi_1)
+        if new_col in seen_cols:
+            seen_cols[new_col] += 1
+            new_col = f"{new_col}_{seen_cols[new_col]}"
+        else:
+            seen_cols[new_col] = 1
+            
+        new_cols.append(new_col)
+    
+    df.columns = new_cols
+    return df

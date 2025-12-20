@@ -444,6 +444,32 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
         for kw in smart_keywords:
             df[f"has_{kw}"] = df["amenities_list"].apply(lambda lst: int(any(kw in item for item in lst)))
 
+        # -----------------------
+        # Title / Name NLP Features
+        # -----------------------
+        if "name" in df.columns:
+            # Clean name for searching
+            s_name = df["name"].fillna("").astype(str).str.lower()
+            
+            # High Value Keywords (From Analysis)
+            title_high_keywords = [
+                "bosphorus", "penthouse", "duplex", "jacuzzi", "luxury", 
+                "view", "residence", "terrace", "suite", "bomonti",
+                "sea", "spa", "ultra", "galata", "taksim" 
+            ]
+            
+            for k in title_high_keywords:
+                df[f"title_has_{k}"] = s_name.apply(lambda x: 1 if k in x else 0)
+                
+            # Low Value / unique indicators
+            title_low_keywords = [
+                "economy", "shared", "room", "hostel", "budget", "cheap", 
+                "metrob", "oda", "paylasimli"
+            ]
+            
+            for k in title_low_keywords:
+                df[f"title_is_{k}"] = s_name.apply(lambda x: 1 if k in x else 0)
+
     # Dates
     if "last_scraped" in df.columns:
         df["last_scraped_dt"] = safe_to_datetime(df["last_scraped"])
@@ -692,6 +718,9 @@ def get_feature_columns(df: pd.DataFrame):
     # smart keyword cols
     has_cols = [c for c in df.columns if c.startswith("has_")]
 
+    # title nlp cols
+    title_cols = [c for c in df.columns if c.startswith("title_")]
+
     # distance cols
     dist_cols = [c for c in df.columns if c.startswith("dist_")]
 
@@ -700,7 +729,7 @@ def get_feature_columns(df: pd.DataFrame):
     avail_cols = [c for c in df.columns if c.startswith("availability_")]
     host_list_cols = [c for c in df.columns if c.startswith("calculated_host_")]
 
-    cols = base_cols + room_cols + amenity_cols + has_cols + dist_cols + review_cols + avail_cols + host_list_cols
+    cols = base_cols + room_cols + amenity_cols + has_cols + title_cols + dist_cols + review_cols + avail_cols + host_list_cols
     # Remove duplicates if any
     cols = list(dict.fromkeys(cols))
     

@@ -400,13 +400,49 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
         df["amenities_list"] = df["amenities"].apply(parse_amenities_list)
         df["amenities_count"] = df["amenities_list"].apply(len)
 
+        # EXPANDED AMENITIES LIST (Based on Pricing Analysis)
+        # Includes High Value (Pool, View), Essential (Wifi, AC), and Penalty (Lock on bedroom door) features.
         key_amenities = [
-            "wifi", "air conditioning", "kitchen", "heating",
-            "washer", "dryer", "parking", "tv", "elevator", "pool"
+            # High Value / Luxury
+            "pool", "gym", "sauna", "view", "elevator", "hot tub", "indoor fireplace",
+            "private entrance", "patio or balcony", "garden", "bbq grill",
+            "waterfront", "beachfront",
+            
+            # Practical / Long Term Value
+            "dishwasher", "oven", "stove", "microwave", "refrigerator", "freezer",
+            "washer", "dryer", "drying rack for clothing",
+            "air conditioning", "central heating", "heating",
+            "dedicated workspace", "ethernet connection",
+            
+            # Essentials & Convenience
+            "wifi", "tv", "cable tv",
+            "kitchen", "cooking basics", "dishes and silverware",
+            "iron", "hair dryer", "shampoo", "essentials", "hangers", "bed linens",
+            "extra pillows and blankets", "room-darkening shades",
+            "coffee maker", "coffee",
+            "hot water", "long term stays allowed",
+            "luggage dropoff allowed", "cleaning products",
+            
+            # Security & Entry
+            "self check-in", "keypad", "lockbox", "smart lock",
+            "fire extinguisher", "first aid kit", "smoke alarm", "carbon monoxide alarm",
+            "safe", "security cameras",
+
+            # Parking
+            "free parking on premises", "paid parking off premises", "free street parking",
+            
+            # Indicators of Low Value / Specific Types
+            "lock on bedroom door",  # Strong negative indicator (Hostel/Shared)
+            "smoking allowed"        # Matrix confirmed negative impact
         ]
         for a in key_amenities:
             col = "amenity_" + a.replace(" ", "_")
             df[col] = df["amenities_list"].apply(lambda lst: int(a in lst))
+            
+        # Smart Keyword Aggregation (Catch variants like "Sea view", "Infinity pool")
+        smart_keywords = ["view", "pool", "gym", "sauna", "jacuzzi"]
+        for kw in smart_keywords:
+            df[f"has_{kw}"] = df["amenities_list"].apply(lambda lst: int(any(kw in item for item in lst)))
 
     # Dates
     if "last_scraped" in df.columns:
@@ -653,6 +689,9 @@ def get_feature_columns(df: pd.DataFrame):
     # amenity dummies
     amenity_cols = [c for c in df.columns if c.startswith("amenity_") and c != "amenities_count"]
 
+    # smart keyword cols
+    has_cols = [c for c in df.columns if c.startswith("has_")]
+
     # distance cols
     dist_cols = [c for c in df.columns if c.startswith("dist_")]
 
@@ -661,7 +700,7 @@ def get_feature_columns(df: pd.DataFrame):
     avail_cols = [c for c in df.columns if c.startswith("availability_")]
     host_list_cols = [c for c in df.columns if c.startswith("calculated_host_")]
 
-    cols = base_cols + room_cols + amenity_cols + dist_cols + review_cols + avail_cols + host_list_cols
+    cols = base_cols + room_cols + amenity_cols + has_cols + dist_cols + review_cols + avail_cols + host_list_cols
     # Remove duplicates if any
     cols = list(dict.fromkeys(cols))
     

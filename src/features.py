@@ -322,11 +322,17 @@ def target_encode(df: pd.DataFrame, by: str, target: str, m: float = 10.0, mappi
 def add_host_binned_features(df: pd.DataFrame) -> pd.DataFrame:
     """
     Adds binned versions of host metrics and ordinal response time.
-    Recovered from previous experiments where this improved score.
+    
+    Why this helps:
+    ----------------------------------
+    1. Distribution Shift: Addresses the gap in host metrics between Train keys and Test keys.
+    2. Robustness: Instead of overfitting to specific percentages (e.g., 98% vs 99%), 
+       the model focuses on broader categories (High/Medium/Low), making it more robust.
     """
     df = df.copy()
     
     # 1. Host Response Time Ordinal
+    # Map text values to ordinal integers (1=Best/Fastest, 4=Worst/Slowest)
     resp_map = {
         'within an hour': 1,
         'within a few hours': 2,
@@ -338,6 +344,10 @@ def add_host_binned_features(df: pd.DataFrame) -> pd.DataFrame:
 
     # 2. Binning Helpers
     def bin_rate(val):
+        """
+        Bins percentage rates (0.0-1.0) into 4 main categories.
+        Purpose: To reduce noise and increase generalization capabilities.
+        """
         if pd.isna(val): return 0 # Unknown
         if val == 1.0: return 4   # Perfect (1.0 because src/features.py converts % to float 0-1)
         if val >= 0.90:  return 3   # High
@@ -638,9 +648,18 @@ def get_feature_columns(df: pd.DataFrame):
     ]
 
     # room_type dummies
-    room_cols = [c for c in df.columns if c.startswith("room_")]
+    room_cols = [c for c in df.columns if c.startswith("room_") and c != "room_type"]
+    
+    # amenity dummies
+    amenity_cols = [c for c in df.columns if c.startswith("amenity_") and c != "amenities_count"]
 
-    cols = base_cols + room_cols
+    # distance cols
+    dist_cols = [c for c in df.columns if c.startswith("dist_")]
+
+    cols = base_cols + room_cols + amenity_cols + dist_cols
+    # Remove duplicates if any
+    cols = list(dict.fromkeys(cols))
+    
     return [c for c in cols if c in df.columns]
 
 

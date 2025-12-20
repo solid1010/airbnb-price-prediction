@@ -319,6 +319,42 @@ def target_encode(df: pd.DataFrame, by: str, target: str, m: float = 10.0, mappi
 # Core feature builder
 # -----------------------
 
+def add_host_binned_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Adds binned versions of host metrics and ordinal response time.
+    Recovered from previous experiments where this improved score.
+    """
+    df = df.copy()
+    
+    # 1. Host Response Time Ordinal
+    resp_map = {
+        'within an hour': 1,
+        'within a few hours': 2,
+        'within a day': 3,
+        'a few days or more': 4
+    }
+    if 'host_response_time' in df.columns:
+        df['host_response_time_ord'] = df['host_response_time'].map(resp_map).fillna(2) # Default to 'within a few hours'
+
+    # 2. Binning Helpers
+    def bin_rate(val):
+        if pd.isna(val): return 0 # Unknown
+        if val == 1.0: return 4   # Perfect (1.0 because src/features.py converts % to float 0-1)
+        if val >= 0.90:  return 3   # High
+        if val >= 0.50:  return 2   # Medium
+        return 1                  # Low
+
+    # Note: src/features.py already creates host_response_rate_num (0.0 - 1.0 scale)
+    # We will use that if available, or clean it ourselves if not.
+    
+    if 'host_response_rate_num' in df.columns:
+        df['host_response_rate_bin'] = df['host_response_rate_num'].apply(bin_rate)
+        
+    if 'host_acceptance_rate_num' in df.columns:
+        df['host_acceptance_rate_bin'] = df['host_acceptance_rate_num'].apply(bin_rate)
+        
+    return df
+
 def add_features(df: pd.DataFrame) -> pd.DataFrame:
     """Create base listing features."""
     df = df.copy()
@@ -375,6 +411,9 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
         df["host_tenure_days"] = (df["last_scraped_dt"] - df["host_since_dt"]).dt.days
 
     df = add_geospatial_features(df)
+    
+    # Custom binning
+    df = add_host_binned_features(df)
 
     # -----------------------
     # ratio / per-person features
@@ -591,6 +630,11 @@ def get_feature_columns(df: pd.DataFrame):
         "bedrooms_per_person",
         "beds_per_person",
         "min_max_nights_ratio",
+
+        # Recovered Binned Features
+        "host_response_time_ord",
+        "host_response_rate_bin",
+        "host_acceptance_rate_bin",
     ]
 
     # room_type dummies

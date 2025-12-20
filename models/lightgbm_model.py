@@ -40,6 +40,18 @@ def main():
     test, _ = features.add_room_type_dummies(test)
     test = features.clean_col_names(test)
     
+    # ---------------------------------------------------------
+    # K-Means Location Clustering (Stateful Feature Engineering)
+    # ---------------------------------------------------------
+    print("  Training K-Means on Train locations...")
+    # Train only on training data to avoid leakage
+    kmeans_model = features.train_kmeans_geo(train, n_clusters=20)
+    
+    print("  Applying K-Means to Train and Test...")
+    train = features.add_kmeans_geo_features(train, kmeans_model)
+    test = features.add_kmeans_geo_features(test, kmeans_model)
+    # ---------------------------------------------------------
+    
     # Categorical handling
     cat_cols = ['neighbourhood_cleansed', 'property_type']
     for c in cat_cols:

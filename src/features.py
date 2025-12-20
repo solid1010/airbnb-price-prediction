@@ -646,6 +646,37 @@ def add_geospatial_features(df: pd.DataFrame) -> pd.DataFrame:
         
     return df
 
+# ------------------------------------------------------------------------------
+# K-Means Clustering (Location Groups)
+# ------------------------------------------------------------------------------
+from sklearn.cluster import KMeans
+
+def train_kmeans_geo(df: pd.DataFrame, n_clusters: int = 20) -> KMeans:
+    """Trains a K-Means model on latitude and longitude."""
+    # Fit only on valid coordinates
+    coords = df[["latitude", "longitude"]].dropna()
+    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+    kmeans.fit(coords)
+    return kmeans
+
+def add_kmeans_geo_features(df: pd.DataFrame, kmeans: KMeans) -> pd.DataFrame:
+    """Adds K-Means cluster IDs as One-Hot encoded features."""
+    df = df.copy()
+    if kmeans is None:
+        return df
+        
+    # Predict clusters
+    # Handle NaNs if any (though lat/lon used be clean by now)
+    coords = df[["latitude", "longitude"]].fillna(df[["latitude", "longitude"]].mean()) 
+    clusters = kmeans.predict(coords)
+    
+    # One-Hot Encoding
+    n_clusters = kmeans.n_clusters
+    for i in range(n_clusters):
+        df[f"geo_cluster_{i}"] = (clusters == i).astype(int)
+        
+    return df
+
 
 # -----------------------
 # Reviews features
@@ -768,12 +799,15 @@ def get_feature_columns(df: pd.DataFrame):
     # distance cols
     dist_cols = [c for c in df.columns if c.startswith("dist_")]
 
+    # K-Means Geo cols
+    geo_cluster_cols = [c for c in df.columns if c.startswith("geo_cluster_")]
+
     # 4. EXPANDED FEATURES (Review, Availability, Host Counts)
     review_cols = [c for c in df.columns if c.startswith("review_scores_")]
     avail_cols = [c for c in df.columns if c.startswith("availability_")]
     host_list_cols = [c for c in df.columns if c.startswith("calculated_host_")]
 
-    cols = base_cols + room_cols + amenity_cols + has_cols + title_cols + desc_cols + dist_cols + review_cols + avail_cols + host_list_cols
+    cols = base_cols + room_cols + amenity_cols + has_cols + title_cols + desc_cols + dist_cols + geo_cluster_cols + review_cols + avail_cols + host_list_cols
     # Remove duplicates if any
     cols = list(dict.fromkeys(cols))
     

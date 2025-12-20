@@ -447,6 +447,35 @@ def add_title_nlp_features(df: pd.DataFrame) -> pd.DataFrame:
         
     return df
 
+def add_description_nlp_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Extract features from listing Description."""
+    if "description" not in df.columns:
+        return df
+        
+    # Clean description for searching
+    s_desc = df["description"].fillna("").astype(str).str.lower()
+    
+    # High Value Keywords (From Analysis)
+    desc_high_keywords = [
+        "bosphorus", "pool", "historic", "luxury", "residence", 
+        "security", "terrace", "modern", "families", "unique", 
+        "view", "sea", "renovated"
+    ]
+    
+    for k in desc_high_keywords:
+        df[f"desc_has_{k}"] = s_desc.apply(lambda x: 1 if k in x else 0)
+        
+    # Low Value / unique indicators
+    desc_low_keywords = [
+        "metrobus", "marmaray", "shared", "room", "economy", 
+        "budget", "studio", "simple", "basement"
+    ]
+    
+    for k in desc_low_keywords:
+        df[f"desc_is_{k}"] = s_desc.apply(lambda x: 1 if k in x else 0)
+        
+    return df
+
 def add_features(df: pd.DataFrame) -> pd.DataFrame:
     """Create base listing features (Orchestrator)."""
     df = df.copy()
@@ -480,6 +509,7 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
     # Modular Feature Extraction
     df = add_amenity_features(df)
     df = add_title_nlp_features(df)
+    df = add_description_nlp_features(df)
 
     # Dates
     if "last_scraped" in df.columns:
@@ -732,6 +762,9 @@ def get_feature_columns(df: pd.DataFrame):
     # title nlp cols
     title_cols = [c for c in df.columns if c.startswith("title_")]
 
+    # description nlp cols
+    desc_cols = [c for c in df.columns if c.startswith("desc_")]
+
     # distance cols
     dist_cols = [c for c in df.columns if c.startswith("dist_")]
 
@@ -740,7 +773,7 @@ def get_feature_columns(df: pd.DataFrame):
     avail_cols = [c for c in df.columns if c.startswith("availability_")]
     host_list_cols = [c for c in df.columns if c.startswith("calculated_host_")]
 
-    cols = base_cols + room_cols + amenity_cols + has_cols + title_cols + dist_cols + review_cols + avail_cols + host_list_cols
+    cols = base_cols + room_cols + amenity_cols + has_cols + title_cols + desc_cols + dist_cols + review_cols + avail_cols + host_list_cols
     # Remove duplicates if any
     cols = list(dict.fromkeys(cols))
     

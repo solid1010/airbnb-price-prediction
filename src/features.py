@@ -440,7 +440,7 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
             df[col] = df["amenities_list"].apply(lambda lst: int(a in lst))
             
         # Smart Keyword Aggregation (Catch variants like "Sea view", "Infinity pool")
-        smart_keywords = ["view", "pool", "gym", "sauna", "jacuzzi"]
+        smart_keywords = ["view", "pool", "gym", "sauna", "jacuzzi", "sound", "baby", "children"]
         for kw in smart_keywords:
             df[f"has_{kw}"] = df["amenities_list"].apply(lambda lst: int(any(kw in item for item in lst)))
 

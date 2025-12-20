@@ -656,7 +656,12 @@ def get_feature_columns(df: pd.DataFrame):
     # distance cols
     dist_cols = [c for c in df.columns if c.startswith("dist_")]
 
-    cols = base_cols + room_cols + amenity_cols + dist_cols
+    # 4. EXPANDED FEATURES (Review, Availability, Host Counts)
+    review_cols = [c for c in df.columns if c.startswith("review_scores_")]
+    avail_cols = [c for c in df.columns if c.startswith("availability_")]
+    host_list_cols = [c for c in df.columns if c.startswith("calculated_host_")]
+
+    cols = base_cols + room_cols + amenity_cols + dist_cols + review_cols + avail_cols + host_list_cols
     # Remove duplicates if any
     cols = list(dict.fromkeys(cols))
     

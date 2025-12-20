@@ -125,8 +125,48 @@ def main():
     
     for fold, (train_idx, val_idx) in enumerate(kf.split(X, y_np)):
         print(f"  Fold {fold+1}/5")
-        X_tr, X_val = X.iloc[train_idx], X.iloc[val_idx]
+        X_tr, X_val = X.iloc[train_idx].copy(), X.iloc[val_idx].copy()
         y_tr, y_val = y_np[train_idx], y_np[val_idx]
+        
+        # ---------------------------------------------------------
+        # Target Encoding (Safe inside CV)
+        # ---------------------------------------------------------
+        # We need to temporarily add the target to X_tr for calculation
+        X_tr["temp_target_log"] = y_tr
+        
+        # Fit on Train
+        X_tr, mapping = features.target_encode(
+            X_tr, 
+            by="neighbourhood_cleansed", 
+            target="temp_target_log", 
+            m=10.0 # Smoothing factor
+        )
+        
+        # Cleanup temp target
+        X_tr = X_tr.drop(columns=["temp_target_log"])
+        
+        # Apply to Validation
+        # target_encode expects a target col even if using mapping (for signature consistency), pass dummy
+        X_val["dummy_target"] = 0
+        X_val, _ = features.target_encode(
+            X_val, 
+            by="neighbourhood_cleansed", 
+            target="dummy_target", 
+            mapping=mapping
+        )
+        X_val = X_val.drop(columns=["dummy_target"])
+        
+        # Apply to Test (Must use Fold's mapping)
+        X_test_fold = X_test.copy()
+        X_test_fold["dummy_target"] = 0
+        X_test_fold, _ = features.target_encode(
+            X_test_fold, 
+            by="neighbourhood_cleansed", 
+            target="dummy_target", 
+            mapping=mapping
+        )
+        X_test_fold = X_test_fold.drop(columns=["dummy_target"])
+        # ---------------------------------------------------------
         
         model = lgb.LGBMRegressor(**best_params)
         model.fit(
@@ -140,7 +180,7 @@ def main():
         fold_scores.append(score)
         print(f"    RMSE: {score:.5f}")
         
-        test_preds_accum += model.predict(X_test)
+        test_preds_accum += model.predict(X_test_fold)
 
     avg_rmse = np.mean(fold_scores)
     print(f"\nAverage CV RMSE: {avg_rmse:.5f}")

@@ -308,9 +308,9 @@ def target_encode(df: pd.DataFrame, by: str, target: str, m: float = 10.0, mappi
         mapping['global_mean'] = global_mean
 
     # 2. Transform: Apply mapping
-    # "global_mean" key is reserved for filling unknowns
+    # Ensure the column used for mapping is treated as a string to avoid categorical issues
     fill_value = mapping.get('global_mean', 0)
-    df[col_name] = df[by].map(mapping).fillna(fill_value)
+    df[col_name] = df[by].astype(str).map(mapping).fillna(fill_value)
     
     return df, mapping
 

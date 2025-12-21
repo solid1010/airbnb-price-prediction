@@ -77,13 +77,17 @@ def main():
     X = train[feats]
     
     # Target handling
-    # src/features.py has clean_price but we need to ensure target is ready
     if 'price' in train.columns:
-        # Drop missing targets if any
+        # 1. Drop missing targets
         train = train.dropna(subset=['price_num']).reset_index(drop=True)
+        
+        # 2. Outlier Clipping: Houses > 25,000 TL are likely outliers or mis-entries that skew the model
+        initial_count = len(train)
+        train = train[train['price_num'] <= 25000].reset_index(drop=True)
+        print(f"  Outlier Clipping: Removed {initial_count - len(train)} rows (> 25,000 TL)")
+        
         # Update X to match dropped rows
         X = train[feats]
-        
         y = np.log1p(train['price_num'])
     else:
          raise ValueError("Price column missing or not processed")
@@ -99,12 +103,12 @@ def main():
     print("Starting 5-Fold Cross Validation...")
     
     best_params = {
-        'n_estimators': 3000, # Increased slightly
-        'learning_rate': 0.02,
-        'num_leaves': 64,
-        'max_depth': 10,
-        'colsample_bytree': 0.7,
-        'subsample': 0.7,
+        'n_estimators': 3000,
+        'learning_rate': 0.01, # Slightly slower learning for more robustness
+        'num_leaves': 128,      # Increased from 64
+        'max_depth': 12,       # Increased from 10
+        'colsample_bytree': 0.6,
+        'subsample': 0.6,
         'objective': 'regression',
         'metric': 'rmse',
         'verbosity': -1,
@@ -129,43 +133,27 @@ def main():
         y_tr, y_val = y_np[train_idx], y_np[val_idx]
         
         # ---------------------------------------------------------
-        # Target Encoding (Safe inside CV)
+        # Target Encoding (Safe inside CV) - Double Encoding
         # ---------------------------------------------------------
-        # We need to temporarily add the target to X_tr for calculation
         X_tr["temp_target_log"] = y_tr
         
-        # Fit on Train
-        X_tr, mapping = features.target_encode(
-            X_tr, 
-            by="neighbourhood_cleansed", 
-            target="temp_target_log", 
-            m=10.0 # Smoothing factor
-        )
-        
-        # Cleanup temp target
-        X_tr = X_tr.drop(columns=["temp_target_log"])
-        
-        # Apply to Validation
-        # target_encode expects a target col even if using mapping (for signature consistency), pass dummy
-        X_val["dummy_target"] = 0
-        X_val, _ = features.target_encode(
-            X_val, 
-            by="neighbourhood_cleansed", 
-            target="dummy_target", 
-            mapping=mapping
-        )
-        X_val = X_val.drop(columns=["dummy_target"])
-        
-        # Apply to Test (Must use Fold's mapping)
+        # 1. Neighbourhood Encoding
+        X_tr, mapping_nb = features.target_encode(X_tr, by="neighbourhood_cleansed", target="temp_target_log", m=10.0)
+        X_val["dummy"] = 0
+        X_val, _ = features.target_encode(X_val, by="neighbourhood_cleansed", target="dummy", mapping=mapping_nb)
         X_test_fold = X_test.copy()
-        X_test_fold["dummy_target"] = 0
-        X_test_fold, _ = features.target_encode(
-            X_test_fold, 
-            by="neighbourhood_cleansed", 
-            target="dummy_target", 
-            mapping=mapping
-        )
-        X_test_fold = X_test_fold.drop(columns=["dummy_target"])
+        X_test_fold["dummy"] = 0
+        X_test_fold, _ = features.target_encode(X_test_fold, by="neighbourhood_cleansed", target="dummy", mapping=mapping_nb)
+        
+        # 2. Property Type Encoding
+        X_tr, mapping_pt = features.target_encode(X_tr, by="property_type", target="temp_target_log", m=10.0)
+        X_val, _ = features.target_encode(X_val, by="property_type", target="dummy", mapping=mapping_pt)
+        X_test_fold, _ = features.target_encode(X_test_fold, by="property_type", target="dummy", mapping=mapping_pt)
+        
+        # Cleanup
+        X_tr = X_tr.drop(columns=["temp_target_log"])
+        X_val = X_val.drop(columns=["dummy"])
+        X_test_fold = X_test_fold.drop(columns=["dummy"])
         # ---------------------------------------------------------
         
         model = lgb.LGBMRegressor(**best_params)

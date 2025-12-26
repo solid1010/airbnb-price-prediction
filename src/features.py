@@ -214,44 +214,30 @@ def add_room_type_dummies(df: pd.DataFrame, dummy_cols=None):
 
 def impute_missing_advanced(df: pd.DataFrame, target_cols=None) -> pd.DataFrame:
     """
-    Performs advanced missing value handling:
-    1. Adds binary flags (e.g., 'bedrooms_is_missing') for columns with NaNs.
-    2. Uses MICE (Multivariate Imputation) to fill missing values based on correlations
-       (e.g., estimating missing 'bedrooms' using 'accommodates' and 'price').
+    Simplified Imputation: Uses MEDIAN instead of MICE.
+    Why? MICE can introduce noise/leakage. Median is robust, deterministic, and safe.
     """
     df = df.copy()
     
-    # Identify numeric columns
+    # Select numeric columns
     numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
     
-    if target_cols is None:
-        # Select numeric columns that actually have missing values
-        target_cols = [c for c in numeric_cols if df[c].isnull().any()]
+    # Exclude targets/IDs to be safe from leakage
+    exclude = ["price", "price_num", "log_price", "id", "scrape_id", "host_id"]
+    cols_to_impute = [c for c in numeric_cols if c not in exclude]
     
-    if not target_cols:
-        return df
-
-    # Step 1: Identification (Add boolean flags)
-    # The fact that data is missing can be a signal itself.
-    for col in target_cols:
-        df[f"{col}_is_missing"] = df[col].isnull().astype(int)
-    
-    # Step 2: Multivariate Imputation (MICE)
-    # We use only numeric columns for the imputer to find correlations
-    imputer = IterativeImputer(max_iter=10, random_state=42)
-    
-    # Fit and transform on numeric data
-    try:
-        df_numeric_imputed = imputer.fit_transform(df[numeric_cols])
-        # Convert result back to DataFrame to map columns correctly
-        df_numeric_imputed = pd.DataFrame(df_numeric_imputed, columns=numeric_cols, index=df.index)
-        
-        # Update the original dataframe with imputed values for target columns
-        for col in target_cols:
-            df[col] = df_numeric_imputed[col]
-    except Exception as e:
-        print(f"Warning: MICE imputation failed, skipping. Error: {e}")
-        
+    # Fill with Median (The most robust method against outliers)
+    for c in cols_to_impute:
+        # Check if column has missing values
+        if df[c].isnull().any():
+            # Add a flag column so the model knows it was originally missing
+            df[f"{c}_is_missing"] = df[c].isnull().astype(int)
+            
+            # Fill with median value
+            median_val = df[c].median()
+            df[c] = df[c].fillna(median_val)
+            
+    print("  Imputation: Filled missing values with Median (Safe Mode).")
     return df
 
 
@@ -407,9 +393,16 @@ def add_amenity_features(df: pd.DataFrame) -> pd.DataFrame:
         "lock on bedroom door",  # Strong negative indicator (Hostel/Shared)
         "smoking allowed"        # Matrix confirmed negative impact
     ]
+    
+    # Create a dictionary first to avoid DataFrame fragmentation warning
+    # (Adding columns one by one inside a loop causes performance issues)
+    new_cols = {}
     for a in key_amenities:
-        col = "amenity_" + a.replace(" ", "_")
-        df[col] = df["amenities_list"].apply(lambda lst: int(a in lst))
+        col_name = "amenity_" + a.replace(" ", "_")
+        new_cols[col_name] = df["amenities_list"].apply(lambda x: 1 if a in x else 0)
+        
+    # Concatenate all new columns at once (Faster and Cleaner)
+    df = pd.concat([df, pd.DataFrame(new_cols, index=df.index)], axis=1)
         
     # Smart Keyword Aggregation (Catch variants like "Sea view", "Infinity pool")
     smart_keywords = ["view", "pool", "gym", "sauna", "jacuzzi", "sound", "baby", "children"]

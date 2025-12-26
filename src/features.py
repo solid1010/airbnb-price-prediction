@@ -359,39 +359,12 @@ def add_amenity_features(df: pd.DataFrame) -> pd.DataFrame:
     df["amenities_list"] = df["amenities"].apply(parse_amenities_list)
     df["amenities_count"] = df["amenities_list"].apply(len)
 
-    # EXPANDED AMENITIES LIST (Based on Pricing Analysis)
+    # EXPANDED AMENITIES LIST (Pruned for Robustness - Top Influencers)
     key_amenities = [
-        # High Value / Luxury
+        # Luxury / High Variance
         "pool", "gym", "sauna", "view", "elevator", "hot tub", "indoor fireplace",
-        "private entrance", "patio or balcony", "garden", "bbq grill",
-        "waterfront", "beachfront",
-        
-        # Practical / Long Term Value
-        "dishwasher", "oven", "stove", "microwave", "refrigerator", "freezer",
-        "washer", "dryer", "drying rack for clothing",
-        "air conditioning", "central heating", "heating",
-        "dedicated workspace", "ethernet connection",
-        
-        # Essentials & Convenience
-        "wifi", "tv", "cable tv",
-        "kitchen", "cooking basics", "dishes and silverware",
-        "iron", "hair dryer", "shampoo", "essentials", "hangers", "bed linens",
-        "extra pillows and blankets", "room-darkening shades",
-        "coffee maker", "coffee",
-        "hot water", "long term stays allowed",
-        "luggage dropoff allowed", "cleaning products",
-        
-        # Security & Entry
-        "self check-in", "keypad", "lockbox", "smart lock",
-        "fire extinguisher", "first aid kit", "smoke alarm", "carbon monoxide alarm",
-        "safe", "security cameras",
-
-        # Parking
-        "free parking on premises", "paid parking off premises", "free street parking",
-        
-        # Indicators of Low Value / Specific Types
-        "lock on bedroom door",  # Strong negative indicator (Hostel/Shared)
-        "smoking allowed"        # Matrix confirmed negative impact
+        "air conditioning", "dishwasher", "washer", "dryer", "heating",
+        "wifi", "tv", "kitchen", "smart lock", "parking"
     ]
     
     # Create a dictionary first to avoid DataFrame fragmentation warning
@@ -399,13 +372,15 @@ def add_amenity_features(df: pd.DataFrame) -> pd.DataFrame:
     new_cols = {}
     for a in key_amenities:
         col_name = "amenity_" + a.replace(" ", "_")
+        # Use simple contains check
         new_cols[col_name] = df["amenities_list"].apply(lambda x: 1 if a in x else 0)
         
     # Concatenate all new columns at once (Faster and Cleaner)
     df = pd.concat([df, pd.DataFrame(new_cols, index=df.index)], axis=1)
         
     # Smart Keyword Aggregation (Catch variants like "Sea view", "Infinity pool")
-    smart_keywords = ["view", "pool", "gym", "sauna", "jacuzzi", "sound", "baby", "children"]
+    # Reduced list to avoid overlap
+    smart_keywords = ["view", "pool", "gym", "jacuzzi"]
     for kw in smart_keywords:
         df[f"has_{kw}"] = df["amenities_list"].apply(lambda lst: int(any(kw in item for item in lst)))
         
@@ -419,21 +394,17 @@ def add_title_nlp_features(df: pd.DataFrame) -> pd.DataFrame:
     # Clean name for searching
     s_name = df["name"].fillna("").astype(str).str.lower()
     
-    # High Value Keywords (From Analysis)
+    # High Value Keywords (Top ~10 strongest signals)
     title_high_keywords = [
         "bosphorus", "penthouse", "duplex", "jacuzzi", "luxury", 
-        "view", "residence", "terrace", "suite", "bomonti",
-        "sea", "spa", "ultra", "galata", "taksim" 
+        "view", "residence", "terrace", "villa", "galata"
     ]
     
     for k in title_high_keywords:
         df[f"title_has_{k}"] = s_name.apply(lambda x: 1 if k in x else 0)
         
-    # Low Value / unique indicators
-    title_low_keywords = [
-        "economy", "shared", "room", "hostel", "budget", "cheap", 
-        "metrob", "oda", "paylasimli"
-    ]
+    # Niche / Low Value indicators (Keep generic ones minimal)
+    title_low_keywords = ["shared", "hostel"]
     
     for k in title_low_keywords:
         df[f"title_is_{k}"] = s_name.apply(lambda x: 1 if k in x else 0)
@@ -448,20 +419,17 @@ def add_description_nlp_features(df: pd.DataFrame) -> pd.DataFrame:
     # Clean description for searching
     s_desc = df["description"].fillna("").astype(str).str.lower()
     
-    # High Value Keywords (From Analysis)
+    # High Value Keywords (Strongest Condition Indicators)
     desc_high_keywords = [
-        "bosphorus", "pool", "historic", "luxury", "residence", 
-        "security", "terrace", "modern", "families", "unique", 
-        "view", "sea", "renovated"
+        "renovated", "historic", "luxury", "sea", "view", "bosphorus"
     ]
     
     for k in desc_high_keywords:
         df[f"desc_has_{k}"] = s_desc.apply(lambda x: 1 if k in x else 0)
         
-    # Low Value / unique indicators
+    # Transport/Distance Penalties (Proven efficient)
     desc_low_keywords = [
-        "metrobus", "marmaray", "shared", "room", "economy", 
-        "budget", "studio", "simple", "basement"
+        "metrobus", "marmaray", "shared", "basement"
     ]
     
     for k in desc_low_keywords:

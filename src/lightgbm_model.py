@@ -69,7 +69,8 @@ def main():
     # K-Means Location Clustering (Stateful Feature Engineering)
     print("  Training K-Means on Train locations...")
     # Train only on training data to avoid leakage
-    kmeans_model = features.train_kmeans_geo(train, n_clusters=20)
+    # Reduce clusters to 10 to avoid overfitting to specific logical blocks
+    kmeans_model = features.train_kmeans_geo(train, n_clusters=10)
     
     print("  Applying K-Means to Train and Test...")
     train = features.add_kmeans_geo_features(train, kmeans_model)
@@ -249,13 +250,13 @@ def main():
         # --- Internal Target Encoding (To prevent Data Leakage) ---
         X_tr["temp_target_log"] = y_tr
         
-        # Apply encoding to Neighborhood
-        X_tr, mapping_nb = features.target_encode(X_tr, by="neighbourhood_cleansed", target="temp_target_log", m=10.0)
+        # Apply encoding to Neighborhood (Stronger smoothing m=50)
+        X_tr, mapping_nb = features.target_encode(X_tr, by="neighbourhood_cleansed", target="temp_target_log", m=50.0)
         X_val["dummy"] = 0
         X_val, _ = features.target_encode(X_val, by="neighbourhood_cleansed", target="dummy", mapping=mapping_nb)
         
-        # Apply encoding to Property Type
-        X_tr, mapping_pt = features.target_encode(X_tr, by="property_type", target="temp_target_log", m=10.0)
+        # Apply encoding to Property Type (Stronger smoothing m=50)
+        X_tr, mapping_pt = features.target_encode(X_tr, by="property_type", target="temp_target_log", m=50.0)
         X_val, _ = features.target_encode(X_val, by="property_type", target="dummy", mapping=mapping_pt)
         
         # Cleanup temporary columns

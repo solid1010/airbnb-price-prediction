@@ -170,7 +170,7 @@ def main():
         return np.mean(scores)
 
     study = optuna.create_study(direction='minimize')
-    study.optimize(objective, n_trials=20) 
+    study.optimize(objective, n_trials=80) 
     
     print(f"Best RMSE from Optuna: {study.best_value:.5f}")
     print(f"Best Optuna Params: {study.best_params}")

@@ -361,37 +361,18 @@ def add_amenity_features(df: pd.DataFrame) -> pd.DataFrame:
 
     # EXPANDED AMENITIES LIST (Based on Pricing Analysis)
     key_amenities = [
-        # High Value / Luxury
-        "pool", "gym", "sauna", "view", "elevator", "hot tub", "indoor fireplace",
-        "private entrance", "patio or balcony", "garden", "bbq grill",
-        "waterfront", "beachfront",
+        # Luxury
+        "pool", "gym", "sauna", "hot tub", "view", "elevator",
+        "waterfront", "patio or balcony", "private entrance",
         
-        # Practical / Long Term Value
-        "dishwasher", "oven", "stove", "microwave", "refrigerator", "freezer",
-        "washer", "dryer", "drying rack for clothing",
-        "air conditioning", "central heating", "heating",
-        "dedicated workspace", "ethernet connection",
+        # Extras
+        "air conditioning", "heating", "washer", "dryer", "dishwasher",
         
-        # Essentials & Convenience
-        "wifi", "tv", "cable tv",
-        "kitchen", "cooking basics", "dishes and silverware",
-        "iron", "hair dryer", "shampoo", "essentials", "hangers", "bed linens",
-        "extra pillows and blankets", "room-darkening shades",
-        "coffee maker", "coffee",
-        "hot water", "long term stays allowed",
-        "luggage dropoff allowed", "cleaning products",
+        # Must Haves
+        "wifi", "kitchen", "tv", "dedicated workspace",
         
-        # Security & Entry
-        "self check-in", "keypad", "lockbox", "smart lock",
-        "fire extinguisher", "first aid kit", "smoke alarm", "carbon monoxide alarm",
-        "safe", "security cameras",
-
-        # Parking
-        "free parking on premises", "paid parking off premises", "free street parking",
-        
-        # Indicators of Low Value / Specific Types
-        "lock on bedroom door",  # Strong negative indicator (Hostel/Shared)
-        "smoking allowed"        # Matrix confirmed negative impact
+        # Security
+        "security", "self check-in"
     ]
     
     # Create a dictionary first to avoid DataFrame fragmentation warning

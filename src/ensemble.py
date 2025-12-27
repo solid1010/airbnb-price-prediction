@@ -17,8 +17,8 @@ def main():
     # 1. DEFINE FILENAMES
     # ---------------------------------------------------------
     # Using the specific files you generated
-    file_lgbm = "submission_final_0.42966.csv"          # Best LightGBM
-    file_cat  = "submission_catboost_optuna_0.42434.csv" # Best CatBoost
+    file_lgbm = "submission_final_0.43268.csv"          # Best LightGBM
+    file_cat  = "submission_catboost_optuna_0.42783.csv" # Best CatBoost
     
     path_lgbm = os.path.join(submissions_dir, file_lgbm)
     path_cat = os.path.join(submissions_dir, file_cat)

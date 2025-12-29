@@ -3,9 +3,6 @@ import ast
 import numpy as np
 import pandas as pd
 
-from sklearn.experimental import enable_iterative_imputer  # For MICE
-from sklearn.impute import IterativeImputer
-
 from sklearn.preprocessing import RobustScaler
 
 
@@ -532,6 +529,42 @@ def add_description_nlp_features(df: pd.DataFrame) -> pd.DataFrame:
         
     return df
 
+def add_cyclical_date_features(df: pd.DataFrame, col_name: str, period: str = 'month') -> pd.DataFrame:
+    """
+    Converts a date column into cyclical sine/cosine features to preserve seasonality.
+    Example: Month 12 and Month 1 are numerically far but temporally close.
+    """
+    df = df.copy()
+    
+    # Ensure column is datetime
+    if col_name not in df.columns:
+        return df
+        
+    dt_col = pd.to_datetime(df[col_name], errors='coerce')
+    
+    if period == 'month':
+        # Months range 1-12
+        max_val = 12
+        val = dt_col.dt.month
+    elif period == 'day':
+        # Days range 1-31 (approx)
+        max_val = 31
+        val = dt_col.dt.day
+    elif period == 'weekday':
+        # Monday=0, Sunday=6
+        max_val = 7
+        val = dt_col.dt.weekday
+    else:
+        return df
+
+    # Apply Sine and Cosine transformation
+    # Formula: sin(2 * pi * x / max_val)
+    df[f"{col_name}_{period}_sin"] = np.sin(2 * np.pi * val / max_val)
+    df[f"{col_name}_{period}_cos"] = np.cos(2 * np.pi * val / max_val)
+    
+    return df
+
+
 def add_features(df: pd.DataFrame) -> pd.DataFrame:
     """Create base listing features (Orchestrator)."""
     df = df.copy()
@@ -580,7 +613,7 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
         df["host_tenure_days"] = (df["last_scraped_dt"] - df["host_since_dt"]).dt.days
 
     df = add_geospatial_features(df)
-    
+
     # Custom binning
     df = add_host_binned_features(df)
 
@@ -600,42 +633,6 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
         df["maximum_nights_safe"] = df["maximum_nights"].replace(0, np.nan)
         df["min_max_nights_ratio"] = df["minimum_nights"] / df["maximum_nights_safe"]
 
-    return df
-
-
-def add_cyclical_date_features(df: pd.DataFrame, col_name: str, period: str = 'month') -> pd.DataFrame:
-    """
-    Converts a date column into cyclical sine/cosine features to preserve seasonality.
-    Example: Month 12 and Month 1 are numerically far but temporally close.
-    """
-    df = df.copy()
-    
-    # Ensure column is datetime
-    if col_name not in df.columns:
-        return df
-        
-    dt_col = pd.to_datetime(df[col_name], errors='coerce')
-    
-    if period == 'month':
-        # Months range 1-12
-        max_val = 12
-        val = dt_col.dt.month
-    elif period == 'day':
-        # Days range 1-31 (approx)
-        max_val = 31
-        val = dt_col.dt.day
-    elif period == 'weekday':
-        # Monday=0, Sunday=6
-        max_val = 7
-        val = dt_col.dt.weekday
-    else:
-        return df
-
-    # Apply Sine and Cosine transformation
-    # Formula: sin(2 * pi * x / max_val)
-    df[f"{col_name}_{period}_sin"] = np.sin(2 * np.pi * val / max_val)
-    df[f"{col_name}_{period}_cos"] = np.cos(2 * np.pi * val / max_val)
-    
     return df
 
 def add_log_target(df: pd.DataFrame) -> pd.DataFrame:

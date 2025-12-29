@@ -8,59 +8,14 @@ from sklearn.impute import IterativeImputer
 
 from sklearn.preprocessing import RobustScaler
 
-# -----------------------
-# Basic helpers
-# -----------------------
-def fill_categoricals_unknown(df: pd.DataFrame, cat_cols) -> pd.DataFrame:
-    """Fill missing categorical values with 'Unknown'."""
-    df = df.copy()
-    for c in cat_cols:
-        if c in df.columns:
-            df[c] = df[c].astype("object").fillna("Unknown")
-    return df
+
+# Preprocessing Functions
 
 def drop_unnamed(df: pd.DataFrame) -> pd.DataFrame:
     """Drop Unnamed columns."""
     df = df.copy()
     cols = [c for c in df.columns if str(c).lower().startswith("unnamed")]
     return df.drop(columns=cols, errors="ignore")
-
-def remove_duplicates(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Removes duplicates based on physical attributes (subset) rather than just ID,
-    keeping the most recent record.
-    """
-    df = df.copy()
-    
-    # Ensure date column is datetime to sort by recency
-    if "last_scraped" in df.columns:
-        df["last_scraped"] = pd.to_datetime(df["last_scraped"], errors="coerce")
-        # Sort by date descending to keep the newest record first
-        df = df.sort_values(by="last_scraped", ascending=False)
-    
-    # Define the "fingerprint" of a listing.
-    # Even if IDs differ, listings with same location, room type, and price are likely duplicates.
-    subset_cols = [
-        "latitude", 
-        "longitude", 
-        "room_type", 
-        "price", 
-        "minimum_nights"
-    ]
-    
-    # Use only columns present in the dataframe
-    valid_subset = [c for c in subset_cols if c in df.columns]
-    
-    if valid_subset:
-        initial_len = len(df)
-        # Drop duplicates based on subset, keeping the first (newest) one
-        df = df.drop_duplicates(subset=valid_subset, keep="first")
-        print(f"Duplicate Removal: {initial_len - len(df)} rows dropped using subset logic.")
-    else:
-        df = df.drop_duplicates()
-
-    return df
-
 
 def clean_price(x) -> float:
     """Convert price text to float."""
@@ -74,7 +29,6 @@ def clean_price(x) -> float:
     except Exception:
         return np.nan
 
-
 def clean_percent(x) -> float:
     """Convert '85%' to 0.85."""
     if pd.isna(x):
@@ -87,7 +41,6 @@ def clean_percent(x) -> float:
     except Exception:
         return np.nan
 
-
 def tf_to_binary(x) -> float:
     """Convert 't'/'f' to 1/0."""
     if pd.isna(x):
@@ -99,15 +52,207 @@ def tf_to_binary(x) -> float:
         return 0
     return np.nan
 
-
 def safe_to_datetime(s):
     """Parse datetime safely."""
     return pd.to_datetime(s, errors="coerce")
+def fill_categoricals_unknown(df: pd.DataFrame, cat_cols) -> pd.DataFrame:
+    """Fill missing categorical values with 'Unknown'."""
+    df = df.copy()
+    for c in cat_cols:
+        if c in df.columns:
+            df[c] = df[c].astype("object").fillna("Unknown")
+    return df
 
 
-# -----------------------
-# Text parsing
-# -----------------------
+
+def impute_missing_advanced(df: pd.DataFrame, target_cols=None) -> pd.DataFrame:
+    """
+    Simplified Imputation: Uses MEDIAN instead of MICE.
+    Why? MICE can introduce noise/leakage. Median is robust, deterministic, and safe.
+    """
+    df = df.copy()
+
+    # Select numeric columns
+    numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+
+    # Exclude targets/IDs to be safe from leakage
+    exclude = ["price", "price_num", "log_price", "id", "scrape_id", "host_id"]
+    cols_to_impute = [c for c in numeric_cols if c not in exclude]
+
+    # Fill with Median (The most robust method against outliers)
+    for c in cols_to_impute:
+        # Check if column has missing values
+        if df[c].isnull().any():
+            # Add a flag column so the model knows it was originally missing
+            df[f"{c}_is_missing"] = df[c].isnull().astype(int)
+
+            # Fill with median value
+            median_val = df[c].median()
+            df[c] = df[c].fillna(median_val)
+
+    print("  Imputation: Filled missing values with Median (Safe Mode).")
+    return df
+
+def handle_outliers_winsorization(df: pd.DataFrame, columns=None, limits=(0.01, 0.99)) -> pd.DataFrame:
+    """
+    Clips outliers in specified columns to the lower and upper percentile limits
+    instead of dropping them. This prevents data loss while handling extreme values.
+    """
+    df = df.copy()
+
+    # If no columns provided, automatically select numeric columns with enough unique values
+    if columns is None:
+        columns = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])
+                   and df[c].nunique() > 10]
+
+    lower_quantile, upper_quantile = limits
+
+    for col in columns:
+        if col in df.columns:
+            # Calculate lower and upper bounds based on quantiles
+            lower_bound = df[col].quantile(lower_quantile)
+            upper_bound = df[col].quantile(upper_quantile)
+
+            # Clip values: values < lower_bound become lower_bound,
+            # values > upper_bound become upper_bound.
+            df[col] = df[col].clip(lower=lower_bound, upper=upper_bound)
+
+    return df
+
+
+def clean_col_names(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Cleans column names to remove special characters, spaces, and non-ASCII chars.
+    This is required to prevent errors in models like LightGBM and XGBoost.
+    """
+    df = df.copy()
+    new_cols = []
+    seen_cols = {}
+
+    for col in df.columns:
+        # Regex: Keep only alphanumeric characters and underscores. Remove everything else.
+        new_col = re.sub(r'[^A-Za-z0-9_]+', '', str(col))
+
+        # Handle duplicates: If "Wifi" and "Wi-Fi" both become "Wifi", append a counter (Wifi_1)
+        if new_col in seen_cols:
+            seen_cols[new_col] += 1
+            new_col = f"{new_col}_{seen_cols[new_col]}"
+        else:
+            seen_cols[new_col] = 1
+
+        new_cols.append(new_col)
+
+    df.columns = new_cols
+    return df
+
+def remove_duplicates(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Removes duplicates based on physical attributes (subset) rather than just ID,
+    keeping the most recent record.
+    """
+    df = df.copy()
+
+    # Ensure date column is datetime to sort by recency
+    if "last_scraped" in df.columns:
+        df["last_scraped"] = pd.to_datetime(df["last_scraped"], errors="coerce")
+        # Sort by date descending to keep the newest record first
+        df = df.sort_values(by="last_scraped", ascending=False)
+
+    # Define the "fingerprint" of a listing.
+    # Even if IDs differ, listings with same location, room type, and price are likely duplicates.
+    subset_cols = [
+        "latitude",
+        "longitude",
+        "room_type",
+        "price",
+        "minimum_nights"
+    ]
+
+    # Use only columns present in the dataframe
+    valid_subset = [c for c in subset_cols if c in df.columns]
+
+    if valid_subset:
+        initial_len = len(df)
+        # Drop duplicates based on subset, keeping the first (newest) one
+        df = df.drop_duplicates(subset=valid_subset, keep="first")
+        print(f"Duplicate Removal: {initial_len - len(df)} rows dropped using subset logic.")
+    else:
+        df = df.drop_duplicates()
+
+    return df
+
+
+# Feature Engineering Functions
+
+
+
+def scale_features_robust(df: pd.DataFrame, scaler=None) -> tuple[pd.DataFrame, object]:
+    """
+    Scales numeric features using RobustScaler.
+    RobustScaler removes the median and scales the data according to the quantile range (IQR).
+    It is robust to outliers, unlike StandardScaler.
+    """
+    df = df.copy()
+
+    # Select numeric columns to scale
+    # Exclude target variables (price) and ID columns to prevent data leakage or errors
+    exclude_cols = ['id', 'scrape_id', 'host_id', 'price', 'price_num', 'log_price']
+
+    numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])
+                    and c not in exclude_cols]
+
+    # Safety check
+    if not numeric_cols:
+        return df, scaler
+
+    # Fit a new scaler
+    if scaler is None:
+        scaler = RobustScaler()
+        # Fit on train data
+        scaler.fit(df[numeric_cols])
+
+    # Apply scaling (works for both train and test)
+    scaled_values = scaler.transform(df[numeric_cols])
+
+    # Update dataframe with scaled values
+    df[numeric_cols] = scaled_values
+
+    return df, scaler
+def select_features_advanced(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Removes only the features that have 0 variance (constant values).
+    These features provide no information to the model.
+    """
+    df = df.copy()
+    initial_shape = df.shape
+
+    # Drop Constant Numeric Columns (Variance = 0)
+    numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+    if numeric_cols:
+        var_check = df[numeric_cols].var()
+        # Find the columns which has a variance of 0 or NaN values.
+        constant_numeric = var_check[var_check == 0].index.tolist()
+    else:
+        constant_numeric = []
+
+    # Drop Constant Categorical Columns (Unique count <= 1)
+    categorical_cols = [c for c in df.columns if not pd.api.types.is_numeric_dtype(df[c])]
+    constant_cat = [c for c in categorical_cols if df[c].nunique() <= 1]
+
+    # Combine lists
+    drop_cols = constant_numeric + constant_cat
+
+    if drop_cols:
+        df = df.drop(columns=drop_cols)
+        print(f"Feature Selection: Dropped {len(drop_cols)} constant columns: {drop_cols}")
+
+    print(f"Feature Selection Complete: Shape changed from {initial_shape} to {df.shape}")
+    return df
+
+
+
+
+
 
 def parse_bathrooms(text) -> float:
     """
@@ -174,10 +319,6 @@ def parse_amenities_list(x):
     return [p.strip().lower() for p in s.split(",") if p.strip()]
 
 
-# -----------------------
-# Categorical (room_type) helper
-# -----------------------
-
 def add_room_type_dummies(df: pd.DataFrame, dummy_cols=None):
     """
     Add room_type one-hot columns.
@@ -207,65 +348,6 @@ def add_room_type_dummies(df: pd.DataFrame, dummy_cols=None):
     return df, list(dummy_cols)
 
 
-
-# ----------------------------------------------
-# Advanced Preprocessing (Imputation & Outliers)
-# ----------------------------------------------
-
-def impute_missing_advanced(df: pd.DataFrame, target_cols=None) -> pd.DataFrame:
-    """
-    Simplified Imputation: Uses MEDIAN instead of MICE.
-    Why? MICE can introduce noise/leakage. Median is robust, deterministic, and safe.
-    """
-    df = df.copy()
-    
-    # Select numeric columns
-    numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
-    
-    # Exclude targets/IDs to be safe from leakage
-    exclude = ["price", "price_num", "log_price", "id", "scrape_id", "host_id"]
-    cols_to_impute = [c for c in numeric_cols if c not in exclude]
-    
-    # Fill with Median (The most robust method against outliers)
-    for c in cols_to_impute:
-        # Check if column has missing values
-        if df[c].isnull().any():
-            # Add a flag column so the model knows it was originally missing
-            df[f"{c}_is_missing"] = df[c].isnull().astype(int)
-            
-            # Fill with median value
-            median_val = df[c].median()
-            df[c] = df[c].fillna(median_val)
-            
-    print("  Imputation: Filled missing values with Median (Safe Mode).")
-    return df
-
-
-def handle_outliers_winsorization(df: pd.DataFrame, columns=None, limits=(0.01, 0.99)) -> pd.DataFrame:
-    """
-    Clips outliers in specified columns to the lower and upper percentile limits
-    instead of dropping them. This prevents data loss while handling extreme values.
-    """
-    df = df.copy()
-    
-    # If no columns provided, automatically select numeric columns with enough unique values
-    if columns is None:
-        columns = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c]) 
-                   and df[c].nunique() > 10]
-
-    lower_quantile, upper_quantile = limits
-
-    for col in columns:
-        if col in df.columns:
-            # Calculate lower and upper bounds based on quantiles
-            lower_bound = df[col].quantile(lower_quantile)
-            upper_bound = df[col].quantile(upper_quantile)
-            
-            # Clip values: values < lower_bound become lower_bound,
-            # values > upper_bound become upper_bound.
-            df[col] = df[col].clip(lower=lower_bound, upper=upper_bound)
-            
-    return df
 
 
 
@@ -652,9 +734,6 @@ def add_kmeans_geo_features(df: pd.DataFrame, kmeans: KMeans) -> pd.DataFrame:
     return df
 
 
-# -----------------------
-# Reviews features
-# -----------------------
 
 def build_reviews_features(reviews_df: pd.DataFrame, ref_date) -> pd.DataFrame:
     """Aggregate reviews per listing."""
@@ -688,9 +767,6 @@ def merge_reviews_features(df: pd.DataFrame, reviews_feat: pd.DataFrame) -> pd.D
     return out.drop(columns=["listing_id"], errors="ignore")
 
 
-# -----------------------
-# Calendar features
-# -----------------------
 
 def build_calendar_features(calendar_df: pd.DataFrame) -> pd.DataFrame:
     """Aggregate calendar availability."""
@@ -723,10 +799,6 @@ def merge_calendar_features(df: pd.DataFrame, cal_feat: pd.DataFrame) -> pd.Data
     )
     return out.drop(columns=["listing_id"], errors="ignore")
 
-
-# -----------------------
-# Feature selector
-# -----------------------
 
 def get_feature_columns(df: pd.DataFrame):
     """Return model-ready numeric features."""
@@ -789,101 +861,6 @@ def get_feature_columns(df: pd.DataFrame):
 
 
 
-def select_features_advanced(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Removes only the features that have 0 variance (constant values).
-    These features provide no information to the model.
-    """
-    df = df.copy()
-    initial_shape = df.shape
-    
-    # Drop Constant Numeric Columns (Variance = 0)
-    numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
-    if numeric_cols:
-        var_check = df[numeric_cols].var()
-        # Find the columns which has varience of 0 or NaN values.
-        constant_numeric = var_check[var_check == 0].index.tolist()
-    else:
-        constant_numeric = []
-    
-    # Drop Constant Categorical Columns (Unique count <= 1)
-    categorical_cols = [c for c in df.columns if not pd.api.types.is_numeric_dtype(df[c])]
-    constant_cat = [c for c in categorical_cols if df[c].nunique() <= 1]
-    
-    # Combine lists
-    drop_cols = constant_numeric + constant_cat
-    
-    if drop_cols:
-        df = df.drop(columns=drop_cols)
-        print(f"Feature Selection: Dropped {len(drop_cols)} constant columns: {drop_cols}")
-    
-    print(f"Feature Selection Complete: Shape changed from {initial_shape} to {df.shape}")
-    return df
 
 
-# -----------------------
-# Scaling (RobustScaler)
-# -----------------------
 
-def scale_features_robust(df: pd.DataFrame, scaler=None) -> tuple[pd.DataFrame, object]:
-    """
-    Scales numeric features using RobustScaler.
-    RobustScaler removes the median and scales the data according to the quantile range (IQR).
-    It is robust to outliers, unlike StandardScaler.
-    """
-    df = df.copy()
-    
-    # Select numeric columns to scale
-    # Exclude target variables (price) and ID columns to prevent data leakage or errors
-    exclude_cols = ['id', 'scrape_id', 'host_id', 'price', 'price_num', 'log_price']
-    
-    numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c]) 
-                    and c not in exclude_cols]
-    
-    # Safety check
-    if not numeric_cols:
-        return df, scaler
-
-    # Fit a new scaler
-    if scaler is None:
-        scaler = RobustScaler()
-        # Fit on train data
-        scaler.fit(df[numeric_cols])
-        
-    # Apply scaling (works for both train and test)
-    scaled_values = scaler.transform(df[numeric_cols])
-    
-    # Update dataframe with scaled values
-    df[numeric_cols] = scaled_values
-    
-    return df, scaler
-
-
-# -----------------------
-# Final Polish: LightGBM Compatibility
-# -----------------------
-
-def clean_col_names(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Cleans column names to remove special characters, spaces, and non-ASCII chars.
-    This is required to prevent errors in models like LightGBM and XGBoost.
-    """
-    df = df.copy()
-    new_cols = []
-    seen_cols = {}
-    
-    for col in df.columns:
-        # Regex: Keep only alphanumeric characters and underscores. Remove everything else.
-        new_col = re.sub(r'[^A-Za-z0-9_]+', '', str(col))
-        
-        # Handle duplicates: If "Wifi" and "Wi-Fi" both become "Wifi", append a counter (Wifi_1)
-        if new_col in seen_cols:
-            seen_cols[new_col] += 1
-            new_col = f"{new_col}_{seen_cols[new_col]}"
-        else:
-            seen_cols[new_col] = 1
-            
-        new_cols.append(new_col)
-    
-    df.columns = new_cols
-    return df

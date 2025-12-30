@@ -119,7 +119,7 @@ def handle_outliers_winsorization(df: pd.DataFrame, columns=None, limits=(0.01, 
 
 def clean_col_names(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Cleans column names to remove special characters, spaces, and non-ASCII chars.
+    Cleans column names to remove special characters.
     This is required to prevent errors in models like LightGBM and XGBoost.
     """
     df = df.copy()

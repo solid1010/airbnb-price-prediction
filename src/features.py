@@ -19,7 +19,7 @@ def clean_price(x) -> float:
     if pd.isna(x):
         return np.nan
     s = str(x)
-    s = re.sub(r"[^\d.,-]", "", s)
+    s = re.sub(r"[^\d.,-]", "", s) # regex with GPT
     s = s.replace(",", "")
     try:
         return float(s)
@@ -64,7 +64,7 @@ def fill_categoricals_unknown(df: pd.DataFrame, cat_cols) -> pd.DataFrame:
 
 def impute_missing_advanced(df: pd.DataFrame, target_cols=None) -> pd.DataFrame:
     """
-    Simplified Imputation: Uses MEDIAN instead of MICE.
+    Imputation: Uses MEDIAN instead of MICE.
     Why? MICE can introduce noise/leakage. Median is robust, deterministic, and safe.
     """
     df = df.copy()
@@ -76,7 +76,7 @@ def impute_missing_advanced(df: pd.DataFrame, target_cols=None) -> pd.DataFrame:
     exclude = ["price", "price_num", "log_price", "id", "scrape_id", "host_id"]
     cols_to_impute = [c for c in numeric_cols if c not in exclude]
 
-    # Fill with Median (The most robust method against outliers)
+    # Fill with Median
     for c in cols_to_impute:
         # Check if column has missing values
         if df[c].isnull().any():

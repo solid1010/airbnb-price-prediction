@@ -644,92 +644,6 @@ def add_log_target(df: pd.DataFrame) -> pd.DataFrame:
     df["log_price"] = np.log1p(df["price_num"])
     return df
 
-# -----------------------
-# Geospatial Feature Engineering
-# -----------------------
-
-def haversine_distance(lat1, lon1, lat2, lon2):
-    """
-    Calculates the great-circle distance between two points on the Earth surface.
-    Returns distance in kilometers.
-    """
-    R = 6371  # Earth radius in km
-    phi1, phi2 = np.radians(lat1), np.radians(lat2)
-    dphi = np.radians(lat2 - lat1)
-    dlambda = np.radians(lon2 - lon1)
-    
-    a = np.sin(dphi/2)**2 + np.cos(phi1)*np.cos(phi2)*np.sin(dlambda/2)**2
-    c = 2 * np.arctan2(np.sqrt(a), np.sqrt(1-a))
-    
-    return R * c
-
-def add_geospatial_features(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Computes distances to key Istanbul landmarks (Taksim, Sultanahmet, etc.)
-    and adds them as new features. Also calculates distance to the nearest center.
-    
-    Ref: User's Notebook - Geospatial Feature Engineering
-    """
-    df = df.copy()
-    
-    # Coordinates must exist
-    if "latitude" not in df.columns or "longitude" not in df.columns:
-        return df
-
-    # Critical locations in Istanbul impacting price
-    locations = {
-        "Taksim": (41.0370, 28.9851),
-        "Sultanahmet": (41.0054, 28.9768),
-        "Besiktas": (41.0422, 29.0060),
-        "Kadikoy": (40.9901, 29.0254),
-        "Airport": (41.2811, 28.7533)
-    }
-    
-    # Calculate distance for each landmark
-    for loc, (lat, lon) in locations.items():
-        col_name = f"dist_{loc}"
-        df[col_name] = haversine_distance(df["latitude"], df["longitude"], lat, lon)
-    
-    # Distance to the nearest city center (excluding Airport usually, as logic suggests)
-    # We select columns starting with 'dist_' but exclude Airport for the 'center' logic
-    center_cols = [f"dist_{loc}" for loc in locations.keys() if loc != "Airport"]
-    
-    if center_cols:
-        df["min_dist_center"] = df[center_cols].min(axis=1)
-        
-    return df
-
-# ------------------------------------------------------------------------------
-# K-Means Clustering (Location Groups)
-# ------------------------------------------------------------------------------
-from sklearn.cluster import KMeans
-
-def train_kmeans_geo(df: pd.DataFrame, n_clusters: int = 20) -> KMeans:
-    """Trains a K-Means model on latitude and longitude."""
-    # Fit only on valid coordinates
-    coords = df[["latitude", "longitude"]].dropna()
-    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
-    kmeans.fit(coords)
-    return kmeans
-
-def add_kmeans_geo_features(df: pd.DataFrame, kmeans: KMeans) -> pd.DataFrame:
-    """Adds K-Means cluster IDs as One-Hot encoded features."""
-    df = df.copy()
-    if kmeans is None:
-        return df
-        
-    # Predict clusters
-    # Handle NaNs if any (though lat/lon used be clean by now)
-    coords = df[["latitude", "longitude"]].fillna(df[["latitude", "longitude"]].mean()) 
-    clusters = kmeans.predict(coords)
-    
-    # One-Hot Encoding
-    n_clusters = kmeans.n_clusters
-    for i in range(n_clusters):
-        df[f"geo_cluster_{i}"] = (clusters == i).astype(int)
-        
-    return df
-
 
 
 def build_reviews_features(reviews_df: pd.DataFrame, ref_date) -> pd.DataFrame:
@@ -856,6 +770,92 @@ def get_feature_columns(df: pd.DataFrame):
     
     return [c for c in cols if c in df.columns]
 
+
+# -----------------------
+# Geospatial Feature Engineering
+# -----------------------
+
+def haversine_distance(lat1, lon1, lat2, lon2):
+    """
+    Calculates the great-circle distance between two points on the Earth surface.
+    Returns distance in kilometers.
+    """
+    R = 6371  # Earth radius in km
+    phi1, phi2 = np.radians(lat1), np.radians(lat2)
+    dphi = np.radians(lat2 - lat1)
+    dlambda = np.radians(lon2 - lon1)
+    
+    a = np.sin(dphi/2)**2 + np.cos(phi1)*np.cos(phi2)*np.sin(dlambda/2)**2
+    c = 2 * np.arctan2(np.sqrt(a), np.sqrt(1-a))
+    
+    return R * c
+
+def add_geospatial_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Computes distances to key Istanbul landmarks (Taksim, Sultanahmet, etc.)
+    and adds them as new features. Also calculates distance to the nearest center.
+    
+    Ref: User's Notebook - Geospatial Feature Engineering
+    """
+    df = df.copy()
+    
+    # Coordinates must exist
+    if "latitude" not in df.columns or "longitude" not in df.columns:
+        return df
+
+    # Critical locations in Istanbul impacting price
+    locations = {
+        "Taksim": (41.0370, 28.9851),
+        "Sultanahmet": (41.0054, 28.9768),
+        "Besiktas": (41.0422, 29.0060),
+        "Kadikoy": (40.9901, 29.0254),
+        "Airport": (41.2811, 28.7533)
+    }
+    
+    # Calculate distance for each landmark
+    for loc, (lat, lon) in locations.items():
+        col_name = f"dist_{loc}"
+        df[col_name] = haversine_distance(df["latitude"], df["longitude"], lat, lon)
+    
+    # Distance to the nearest city center (excluding Airport usually, as logic suggests)
+    # We select columns starting with 'dist_' but exclude Airport for the 'center' logic
+    center_cols = [f"dist_{loc}" for loc in locations.keys() if loc != "Airport"]
+    
+    if center_cols:
+        df["min_dist_center"] = df[center_cols].min(axis=1)
+        
+    return df
+
+# ------------------------------------------------------------------------------
+# K-Means Clustering (Location Groups)
+# ------------------------------------------------------------------------------
+from sklearn.cluster import KMeans
+
+def train_kmeans_geo(df: pd.DataFrame, n_clusters: int = 20) -> KMeans:
+    """Trains a K-Means model on latitude and longitude."""
+    # Fit only on valid coordinates
+    coords = df[["latitude", "longitude"]].dropna()
+    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+    kmeans.fit(coords)
+    return kmeans
+
+def add_kmeans_geo_features(df: pd.DataFrame, kmeans: KMeans) -> pd.DataFrame:
+    """Adds K-Means cluster IDs as One-Hot encoded features."""
+    df = df.copy()
+    if kmeans is None:
+        return df
+        
+    # Predict clusters
+    # Handle NaNs if any (though lat/lon used be clean by now)
+    coords = df[["latitude", "longitude"]].fillna(df[["latitude", "longitude"]].mean()) 
+    clusters = kmeans.predict(coords)
+    
+    # One-Hot Encoding
+    n_clusters = kmeans.n_clusters
+    for i in range(n_clusters):
+        df[f"geo_cluster_{i}"] = (clusters == i).astype(int)
+        
+    return df
 
 
 

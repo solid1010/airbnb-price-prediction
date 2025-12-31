@@ -8,7 +8,7 @@
 ![Status](https://img.shields.io/badge/Status-Active-green)
 
 ## Project Overview
-This project is developed for the **YZV 311E Data Mining** course competition. [cite_start]The main objective is to predict the nightly price of Airbnb listings based on a diverse set of features including host details, property descriptions, availability, and customer reviews[cite: 3, 4].
+This project is developed for the **YZV 311E Data Mining** course competition. The main objective is to predict the nightly price of Airbnb listings based on a diverse set of features including host details, property descriptions, availability, and customer reviews.
 
 The project focuses on the complete **Data Mining Pipeline**:
 1.  **Data Understanding & EDA:** Analyzing distributions, correlations, and outliers.

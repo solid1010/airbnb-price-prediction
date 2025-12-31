@@ -17,10 +17,11 @@ The project focuses on the complete **Data Mining Pipeline**:
 4.  **Modeling:** Implementing baseline regressions and advanced ensemble methods (XGBoost/LightGBM).
 5.  **Evaluation:** Optimizing for **RMSLE** (Root Mean Squared Logarithmic Error).
 
-## Team Members (Team Overfitters)
-* **İbrahim Bancar** - Data Exploration & Preprocessing
-* **Hasan Kan** - Feature Engineering & Modeling
-* **Alperen Sağlam** - Evaluation & Reporting
+## Team Members 
+* **Alperen Sağlam** 
+* **İbrahim Bancar** 
+* **Hasan Kan** 
+
 
 ## Repository Structure
 ```text
